@@ -46,26 +46,30 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
                 ]
             ]
 
+            # Search the Wikidata Element for this commune
             id_item = frc.get_item(claims=[ExternalID(prop_nr='P374', value=code_insee)])
             if id_item:
                 wb_item = wbi.item.get(id_item)
 
+                # Check if a write is needed or not
                 write_needed = True
                 for claim in wb_item.claims.get('P1082'):
                     for qualifier in claim.qualifiers.get('P585'):
-                        if qualifier == qualifiers[0].mainsnak and claim.mainsnak.datavalue['value']['amount'] == wbi_helpers.format_amount(
-                                population):
+                        if qualifier == qualifiers[0].mainsnak and claim.mainsnak.datavalue['value']['amount'] == wbi_helpers.format_amount(population):
                             write_needed = False
                             break
                     else:
                         continue
                     break
 
+                # Create the claim to add with references and qualifiers
                 wb_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers), action_if_exists=ActionIfExists.APPEND)
 
                 if write_needed:
-                    print('Write to Wikidata')
+                    print(f'Write to Wikidata for {row[6]} ({row[2]})')
                     try:
                         wb_item.write(summary='Update population for 2019')
                     except MWApiError as e:
                         print(e)
+                else:
+                    print(f'Skipping {row[6]} ({row[2]})')

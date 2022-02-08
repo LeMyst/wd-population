@@ -3,7 +3,7 @@ import csv
 from wikibaseintegrator import (WikibaseIntegrator, wbi_fastrun, wbi_helpers, wbi_login)
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
 from wikibaseintegrator.wbi_config import config as wbi_config
-from wikibaseintegrator.wbi_enums import ActionIfExists
+from wikibaseintegrator.wbi_enums import ActionIfExists, WikibaseRank
 from wikibaseintegrator.wbi_exceptions import MWApiError
 
 # Import local config for user and password
@@ -54,16 +54,22 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
                 # Check if a write is needed or not
                 write_needed = True
                 for claim in wb_item.claims.get('P1082'):
-                    for qualifier in claim.qualifiers.get('P585'):
-                        if qualifier == qualifiers[0].mainsnak and claim.mainsnak.datavalue['value']['amount'] == wbi_helpers.format_amount(population):
-                            write_needed = False
-                            break
-                    else:
-                        continue
-                    break
+                    if claim.rank == WikibaseRank.PREFERRED:
+                        for qualifier in claim.qualifiers.get('P585'):
+                            if qualifier == qualifiers[0].mainsnak and claim.mainsnak.datavalue['value']['amount'] == wbi_helpers.format_amount(population):
+                                write_needed = False
+                                break
+                        else:
+                            continue
+                        break
 
-                # Create the claim to add with references and qualifiers
-                wb_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers), action_if_exists=ActionIfExists.APPEND)
+                # Set the preferred rank of others claims to normal
+                for claim in wb_item.claims.get('P1082'):
+                    claim.rank = WikibaseRank.NORMAL
+
+                # Create the claim to add with references, qualifiers and preferred rank
+                wb_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED),
+                                   action_if_exists=ActionIfExists.APPEND)
 
                 if write_needed:
                     print(f'Write to Wikidata for {row[6]} ({row[2]})')

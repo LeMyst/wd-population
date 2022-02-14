@@ -19,9 +19,9 @@ wbi = WikibaseIntegrator(login=login_instance)
 # logging.basicConfig(level=logging.DEBUG)
 
 base_filter = [
-    Item(prop_nr='P31', value='Q484170'),
-    Item(prop_nr='P17', value='Q142'),
-    ExternalID(prop_nr='P374')
+    Item(prop_nr='P31', value='Q484170'),  # instance of commune of France
+    Item(prop_nr='P17', value='Q142'),  # country France
+    ExternalID(prop_nr='P374')  # INSEE municipality code
 ]
 
 print('Creating fastrun container')

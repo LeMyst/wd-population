@@ -47,7 +47,25 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
             ]
 
             # Search the Wikidata Element for this commune
-            id_item = frc.get_item(claims=[ExternalID(prop_nr='P374', value=code_insee)])
+            id_items = frc.get_items(claims=[ExternalID(prop_nr='P374', value=code_insee)])
+
+            id_item = None
+            if not len(id_items) == 1:
+                for item in id_items:
+                    test_item = wbi.item.get(item)
+                    claims = test_item.claims.get('P31')
+                    for claim in claims:
+                        if claim.mainsnak.datavalue['value']['id'] == 'Q484170':
+                            if 'P582' not in claim.qualifiers_order:
+                                id_item = item
+                                break
+                    else:
+                        continue
+                    break
+
+            else:
+                id_item = id_items.pop()
+
             if id_item:
                 wb_item = wbi.item.get(id_item)
 

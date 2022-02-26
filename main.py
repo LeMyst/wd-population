@@ -1,7 +1,9 @@
 import csv
+from datetime import datetime
 
 from wikibaseintegrator import (WikibaseIntegrator, wbi_fastrun, wbi_helpers, wbi_login)
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
+from wikibaseintegrator.entities import ItemEntity
 from wikibaseintegrator.wbi_config import config as wbi_config
 from wikibaseintegrator.wbi_enums import ActionIfExists, WikibaseRank
 from wikibaseintegrator.wbi_exceptions import MWApiError
@@ -52,13 +54,16 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
             id_item = None
             if not len(id_items) == 1:
                 for item in id_items:
-                    test_item = wbi.item.get(item)
+                    test_item = ItemEntity(api=wbi).get(item)
                     claims = test_item.claims.get('P31')
                     for claim in claims:
                         if claim.mainsnak.datavalue['value']['id'] == 'Q484170':
-                            if 'P582' not in claim.qualifiers_order:
-                                id_item = item
-                                break
+                            if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:
+                                d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'], '+%Y-%m-%dT00:00:00Z')
+                                census = datetime.strptime('+2019-01-01T00:00:00Z', '+%Y-%m-%dT00:00:00Z')
+                                if d.time() >= census.time():
+                                    id_item = item
+                                    break
                     else:
                         continue
                     break
@@ -67,7 +72,7 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
                 id_item = id_items.pop()
 
             if id_item:
-                wb_item = wbi.item.get(id_item)
+                wb_item = ItemEntity(api=wbi).get(id_item)
 
                 # Check if a write is needed or not
                 write_needed = True

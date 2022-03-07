@@ -64,7 +64,7 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
                         for claim in claims:
                             if claim.mainsnak.datavalue['value']['id'] == 'Q484170':
                                 if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:
-                                    d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'], '+%Y-%m-%dT00:00:00Z')
+                                    d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
                                     census = datetime.strptime('+2019-01-01T00:00:00Z', '+%Y-%m-%dT00:00:00Z')
                                     if d.time() >= census.time():
                                         id_item = item

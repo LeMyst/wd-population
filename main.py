@@ -29,15 +29,15 @@ base_filter = [
 print('Creating fastrun container')
 frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter)
 
-skip_to_insee = 24167
+skip_to_insee = 60315
 
 print('Start parsing CSV')
 with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
     spamreader = csv.reader(csvfile, delimiter=';')
     for row in spamreader:
         if row[0].isnumeric():
-            code_insee = int(row[2][0:2] + row[5])
-            if code_insee > skip_to_insee:
+            code_insee = row[2][0:2] + row[5]
+            if int(code_insee.replace('A', '0').replace('B', '0')) > skip_to_insee:
                 population = int(row[7])
 
                 qualifiers = [

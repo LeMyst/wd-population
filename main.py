@@ -16,7 +16,7 @@ wbi_config['USER_AGENT'] = 'Update French Population'
 # login object
 login_instance = wbi_login.Login(user=config.user, password=config.password)
 
-wbi = WikibaseIntegrator(login=login_instance)
+wbi = WikibaseIntegrator(login=login_instance, is_bot=True)
 
 # logging.basicConfig(level=logging.DEBUG)
 

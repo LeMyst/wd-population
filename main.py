@@ -29,7 +29,7 @@ base_filter = [
 print('Creating fastrun container')
 frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter)
 
-skip_to_insee = 60315
+skip_to_insee = 0
 
 print('Start parsing CSV')
 with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
@@ -54,27 +54,31 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
                 # Search the Wikidata Element for this commune
                 id_items = frc.get_items(claims=[ExternalID(prop_nr='P374', value=str(code_insee))])
 
-                id_item = None
                 if not id_items:
                     continue
-                elif not len(id_items) == 1:
+
+                id_item = None
+                final_items = id_items.copy()
+                if not len(id_items) == 1:
                     for item in id_items:
                         test_item = ItemEntity(api=wbi).get(item)
-                        claims = test_item.claims.get('P31')
+                        claims = test_item.claims.get('P31')  # instance of
                         for claim in claims:
-                            if claim.mainsnak.datavalue['value']['id'] == 'Q484170':
-                                if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:
+                            if claim.mainsnak.datavalue['value']['id'] == 'Q484170':  # commune of France (Q484170)
+                                if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:  # start time (P580) and end time (P582)
                                     d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
                                     census = datetime.strptime('+2019-01-01T00:00:00Z', '+%Y-%m-%dT00:00:00Z')
                                     if d.time() >= census.time():
                                         id_item = item
                                         break
+                                if 'P582' in claim.qualifiers_order:  # end time (P582)
+                                    final_items.discard(item)  # If the item have an end time, we remove it from the list
                         else:
                             continue
                         break
 
-                else:
-                    id_item = id_items.pop()
+                if not id_item and len(final_items) == 1:  # if only one item remains, we take it
+                    id_item = final_items.pop()
 
                 if id_item:
                     wb_item = ItemEntity(api=wbi).get(id_item)

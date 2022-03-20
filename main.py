@@ -1,4 +1,5 @@
 import csv
+import logging
 from datetime import datetime
 
 from wikibaseintegrator import (WikibaseIntegrator, wbi_fastrun, wbi_helpers, wbi_login)
@@ -18,7 +19,7 @@ login_instance = wbi_login.Login(user=config.user, password=config.password)
 
 wbi = WikibaseIntegrator(login=login_instance, is_bot=True)
 
-# logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
 
 base_filter = [
     Item(prop_nr='P31', value='Q484170'),  # instance of commune of France

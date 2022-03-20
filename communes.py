@@ -39,7 +39,7 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
         if row[0].isnumeric():
             code_insee = row[2][0:2] + row[5]
             if int(code_insee.replace('A', '0').replace('B', '0')) > skip_to_insee:
-                population = int(row[7])
+                population = int(row[7])  # PMUN
 
                 qualifiers = [
                     Time(prop_nr='P585', time='+2019-01-01T00:00:00Z'),

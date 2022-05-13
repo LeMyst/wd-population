@@ -1,1 +1,1 @@
-wikibaseintegrator~=0.12.0rc2
+git+https://github.com/LeMyst/WikibaseIntegrator.git@rewrite-wbi#egg=wikibaseintegrator

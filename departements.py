@@ -1,5 +1,6 @@
 import csv
 import logging
+import time
 from datetime import datetime
 
 from wikibaseintegrator import (WikibaseIntegrator, wbi_fastrun, wbi_helpers, wbi_login)
@@ -19,7 +20,18 @@ login_instance = wbi_login.Login(user=config.user, password=config.password)
 
 wbi = WikibaseIntegrator(login=login_instance, is_bot=True)
 
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
+
+qualifiers = [
+    Time(prop_nr='P585', time='+2019-01-01T00:00:00Z'),
+    Item(prop_nr='P459', value='Q39825')
+]
+
+references = [
+    [
+        Item(value='Q110382235', prop_nr='P248')
+    ]
+]
 
 base_filter = [
     Item(prop_nr='P31', value='Q6465'),  # instance of department of France
@@ -35,25 +47,15 @@ skip_to_insee = 0
 print('Start parsing CSV')
 with open('donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
     spamreader = csv.reader(csvfile, delimiter=';')
+    start_time = time.time()
     for row in spamreader:
         if row[0].isnumeric():
             code_insee = row[2]
             if int(code_insee.replace('A', '0').replace('B', '0')) > skip_to_insee:
                 population = int(row[7])  # PMUN
 
-                qualifiers = [
-                    Time(prop_nr='P585', time='+2019-01-01T00:00:00Z'),
-                    Item(prop_nr='P459', value='Q39825')
-                ]
-
-                references = [
-                    [
-                        Item(value='Q110382235', prop_nr='P248')
-                    ]
-                ]
-
                 # Search the Wikidata Element for this commune
-                id_items = frc.get_items(claims=[ExternalID(prop_nr='P2586', value=str(code_insee))])
+                id_items = frc.get_entities(claims=[ExternalID(prop_nr='P2586', value=str(code_insee))], use_cache=True)
 
                 if not id_items:
                     continue
@@ -105,10 +107,12 @@ with open('donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
                                        action_if_exists=ActionIfExists.APPEND)
 
                     if write_needed:
-                        print(f'Write to Wikidata for {row[6]} ({row[2]})')
+                        logging.debug(f'Write to Wikidata for {row[6]} ({row[2]})')
                         try:
                             wb_item.write(summary='Update population for 2019')
                         except MWApiError as e:
-                            print(e)
+                            logging.debug(e)
                     else:
-                        print(f'Skipping {row[6]} ({row[2]})')
+                        logging.debug(f'Skipping {row[6]} ({row[2]})')
+
+print("--- %s seconds ---" % (time.time() - start_time))

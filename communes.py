@@ -102,7 +102,7 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
 
                     # Create the claim to add with references, qualifiers and preferred rank
                     wb_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED),
-                                       action_if_exists=ActionIfExists.APPEND)
+                                       action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
                     if write_needed:
                         print(f'Write to Wikidata for {row[6]} ({row[2]})')

@@ -42,13 +42,13 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
                 population = int(row[7])  # PMUN
 
                 qualifiers = [
-                    Time(prop_nr='P585', time='+2019-01-01T00:00:00Z'),
+                    Time(prop_nr='P585', time='+2020-01-01T00:00:00Z'),
                     Item(prop_nr='P459', value='Q39825')
                 ]
 
                 references = [
                     [
-                        Item(value='Q110382235', prop_nr='P248')
+                        Item(value='Q115923391', prop_nr='P248')
                     ]
                 ]
 
@@ -107,7 +107,8 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
                     if write_needed:
                         print(f'Write to Wikidata for {row[6]} ({row[2]})')
                         try:
-                            wb_item.write(summary='Update population for 2019')
+                            print('write')
+                            #wb_item.write(summary='Update population for 2019')
                         except MWApiError as e:
                             print(e)
                     else:

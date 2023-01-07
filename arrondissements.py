@@ -2,7 +2,7 @@ import csv
 import logging
 from datetime import datetime
 
-from wikibaseintegrator import (WikibaseIntegrator, wbi_fastrun, wbi_helpers, wbi_login)
+from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_helpers, wbi_login
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
 from wikibaseintegrator.entities import ItemEntity
 from wikibaseintegrator.wbi_config import config as wbi_config

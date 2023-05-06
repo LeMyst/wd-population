@@ -1,6 +1,6 @@
 import csv
 import logging
-from datetime import datetime
+import time
 
 from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_helpers, wbi_login
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
@@ -21,6 +21,17 @@ wbi = WikibaseIntegrator(login=login_instance, is_bot=True)
 
 logging.basicConfig(level=logging.DEBUG)
 
+qualifiers = [
+    Time(prop_nr='P585', time=config.point_in_time),  # point in time
+    Item(prop_nr='P459', value='Q39825')  # determination method: census
+]
+
+references = [
+    [
+        Item(value=config.stated_in, prop_nr='P248')  # stated in: Populations légales 2020
+    ]
+]
+
 base_filter = [
     Item(prop_nr='P31', value='Q36784'),  # instance of region of France
     Item(prop_nr='P17', value='Q142'),  # country France
@@ -33,27 +44,17 @@ frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter)
 skip_to_insee = 0
 
 print('Start parsing CSV')
-with open('donnees_regions.csv', newline='', encoding='utf-8') as csvfile:
+with open('annees/' + config.year + '/donnees_regions.csv', newline='', encoding='utf-8') as csvfile:
     spamreader = csv.reader(csvfile, delimiter=';')
+    start_time = time.time()
     for row in spamreader:
         if row[0].isnumeric():
             code_insee = row[0]
             if int(code_insee.replace('A', '0').replace('B', '0')) > skip_to_insee:
                 population = int(row[5])  # PMUN
 
-                qualifiers = [
-                    Time(prop_nr='P585', time='+2020-01-01T00:00:00Z'),
-                    Item(prop_nr='P459', value='Q39825')
-                ]
-
-                references = [
-                    [
-                        Item(value='Q115923391', prop_nr='P248')
-                    ]
-                ]
-
                 # Search the Wikidata Element for this commune
-                id_items = frc.get_items(claims=[ExternalID(prop_nr='P2585', value=str(code_insee))])
+                id_items = frc.get_entities(claims=[ExternalID(prop_nr='P2585', value=str(code_insee))])
 
                 if not id_items:
                     continue
@@ -88,12 +89,15 @@ with open('donnees_regions.csv', newline='', encoding='utf-8') as csvfile:
                                        action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
                     if write_needed:
-                        print(f'Write to Wikidata for {row[1]} ({row[0]})')
+                        logging.debug(f'Write to Wikidata for {row[1]} ({row[0]})')
                         try:
-                            print('write')
-                            wb_item.write(summary='Update population for 2020')
-                            exit(0)
+                            logging.debug('write')
+                            wb_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'])
                         except MWApiError as e:
-                            print(e)
+                            logging.debug(e)
+                        finally:
+                            exit(0)
                     else:
-                        print(f'Skipping {row[1]} ({row[0]})')
+                        logging.debug(f'Skipping {row[1]} ({row[0]})')
+
+print("--- %s seconds ---" % (time.time() - start_time))

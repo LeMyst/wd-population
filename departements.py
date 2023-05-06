@@ -20,16 +20,16 @@ login_instance = wbi_login.Login(user=config.user, password=config.password)
 
 wbi = WikibaseIntegrator(login=login_instance, is_bot=True)
 
-# logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
 
 qualifiers = [
-    Time(prop_nr='P585', time='+2019-01-01T00:00:00Z'),
-    Item(prop_nr='P459', value='Q39825')
+    Time(prop_nr='P585', time=config.point_in_time),  # point in time
+    Item(prop_nr='P459', value='Q39825')  # determination method: census
 ]
 
 references = [
     [
-        Item(value='Q110382235', prop_nr='P248')
+        Item(value=config.stated_in, prop_nr='P248')  # stated in: Populations légales 2020
     ]
 ]
 
@@ -45,7 +45,7 @@ frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter)
 skip_to_insee = 0
 
 print('Start parsing CSV')
-with open('donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
+with open('annees/' + config.year + '/donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
     spamreader = csv.reader(csvfile, delimiter=';')
     start_time = time.time()
     for row in spamreader:
@@ -70,7 +70,7 @@ with open('donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
                             if claim.mainsnak.datavalue['value']['id'] == 'Q484170':  # commune of France (Q484170)
                                 if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:  # start time (P580) and end time (P582)
                                     d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                    census = datetime.strptime('+2019-01-01T00:00:00Z', '+%Y-%m-%dT00:00:00Z')
+                                    census = datetime.strptime(config.point_in_time, '+%Y-%m-%dT00:00:00Z')
                                     if d.time() >= census.time():
                                         id_item = item
                                         break
@@ -109,9 +109,12 @@ with open('donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
                     if write_needed:
                         logging.debug(f'Write to Wikidata for {row[6]} ({row[2]})')
                         try:
-                            wb_item.write(summary='Update population for 2019')
+                            logging.debug('write')
+                            wb_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'])
                         except MWApiError as e:
                             logging.debug(e)
+                        # finally:
+                        #    exit(0)
                     else:
                         logging.debug(f'Skipping {row[6]} ({row[2]})')
 

@@ -6,7 +6,7 @@ from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_login
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
 from wikibaseintegrator.entities import ItemEntity
 from wikibaseintegrator.wbi_config import config as wbi_config
-from wikibaseintegrator.wbi_enums import WikibaseRank
+from wikibaseintegrator.wbi_enums import ActionIfExists, WikibaseRank
 from wikibaseintegrator.wbi_exceptions import MWApiError
 
 # Import local config for user and password
@@ -22,13 +22,13 @@ wbi = WikibaseIntegrator(login=login_instance, is_bot=True)
 logging.basicConfig(level=logging.DEBUG)
 
 qualifiers = [
-    Time(prop_nr='P585', time='+2019-01-01T00:00:00Z'),
-    Item(prop_nr='P459', value='Q39825')
+    Time(prop_nr='P585', time=config.point_in_time),  # point in time
+    Item(prop_nr='P459', value='Q39825')  # determination method: census
 ]
 
 references = [
     [
-        Item(value='Q110382235', prop_nr='P248')
+        Item(value=config.stated_in, prop_nr='P248')  # stated in: Populations légales 2020
     ]
 ]
 
@@ -39,15 +39,16 @@ base_filter = [
 ]
 
 print('Creating fastrun container')
-frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=False, use_cache=True)
+frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_cache=True)
 
 skip_to_insee = 0
 
 print('Start parsing CSV')
-with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
+with open('annees/' + config.year + '/donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
     spamreader = csv.reader(csvfile, delimiter=';')
     start_time = time.time()
     for row in spamreader:
+        id_item = None
         if row[0].isnumeric():
             code_insee = row[2][0:2] + row[5]
             if int(code_insee.replace('A', '0').replace('B', '0')) > skip_to_insee:
@@ -57,15 +58,40 @@ with open('donnees_communes.csv', newline='', encoding='utf-8') as csvfile:
                 item.claims.add(claims=[ExternalID(prop_nr='P374', value=str(code_insee)),
                                         Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED)])
 
-                write_required = frc.write_required(entity=item, property_filter=['P1082'], use_cache=True)
+                write_required = frc.write_required(entity=item, property_filter='P1082', use_cache=True, query_limit=1000000)
 
-                if write_required and code_insee in frc.get_entities(claims=item.claims):
-                    logging.info(f'Write to Wikidata for {row[6]} ({row[2]})')
-                    exit(0)
+                entities = frc.get_entities(claims=item.claims, use_cache=True, query_limit=1000000)
+                if not id_item and len(entities) == 1:  # if only one item remains, we take it
+                    id_item = entities.pop()
+
+                logging.debug(write_required)
+                logging.debug(id_item)
+                if write_required and id_item:
+                    logging.info(f'Write to Wikidata for {row[6]} ({row[2]}) {code_insee} to {id_item}')
+                    item.id = id_item
                     try:
-                        item.write(summary='Update population for 2019')
+                        logging.debug('write')
+                        update_item = wbi.item.get(id_item)
+
+                        for claim in update_item.claims.get('P1082'):
+                            claim.rank = WikibaseRank.NORMAL
+
+                            # Clean duplicate qualifiers
+                            if len(claim.qualifiers.get('P585')) > 1:
+                                claim.qualifiers.remove(qualifier=Time(prop_nr='P585', time=config.point_in_time))
+
+                            # Clean duplicate references
+                            if len(claim.references.references) > 1:
+                                claim.references.remove(reference_to_remove=Item(value=config.stated_in, prop_nr='P248'))
+
+                        update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED),
+                                               action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
+
+                        update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'])
                     except MWApiError as e:
-                        print(e)
+                        logging.debug(e)
+                    # finally:
+                    #   exit(0)
                 else:
                     logging.info(f'Skipping {row[6]} ({row[2]})')
 

@@ -1,6 +1,7 @@
 import csv
 import logging
 import time
+from datetime import datetime
 
 from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_login
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
@@ -58,14 +59,33 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
                 item.claims.add(claims=[ExternalID(prop_nr='P374', value=str(code_insee)),
                                         Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED)])
 
-                write_required = frc.write_required(entity=item, property_filter='P1082', use_cache=True, query_limit=1000000)
+                write_required = frc.write_required(entity=item, use_cache=True, query_limit=1000000)
 
                 entities = frc.get_entities(claims=item.claims, use_cache=True, query_limit=1000000)
-                if not id_item and len(entities) == 1:  # if only one item remains, we take it
-                    id_item = entities.pop()
 
-                logging.debug(write_required)
-                logging.debug(id_item)
+                id_item = None
+                final_items = entities.copy()
+                if len(entities) > 1:
+                    for entity in entities:
+                        test_item = wbi.item.get(entity)
+                        claims = test_item.claims.get('P31')  # instance of
+                        for claim in claims:
+                            if claim.mainsnak.datavalue['value']['id'] == 'Q484170':  # commune of France (Q484170)
+                                if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:  # start time (P580) and end time (P582)
+                                    d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
+                                    census = datetime.strptime('+2019-01-01T00:00:00Z', '+%Y-%m-%dT00:00:00Z')
+                                    if d.time() >= census.time():
+                                        id_item = entity
+                                        break
+                                if 'P582' in claim.qualifiers_order:  # end time (P582)
+                                    final_items.remove(entity)  # If the item have an end time, we remove it from the list
+                        else:
+                            continue
+                        break
+
+                if not id_item and len(final_items) == 1:  # if only one item remains, we take it
+                    id_item = final_items.pop()
+
                 if write_required and id_item:
                     logging.info(f'Write to Wikidata for {row[6]} ({row[2]}) {code_insee} to {id_item}')
                     item.id = id_item

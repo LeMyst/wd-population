@@ -5,7 +5,6 @@ from datetime import datetime
 
 from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_login
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
-from wikibaseintegrator.entities import ItemEntity
 from wikibaseintegrator.wbi_config import config as wbi_config
 from wikibaseintegrator.wbi_enums import ActionIfExists, WikibaseRank
 from wikibaseintegrator.wbi_exceptions import MWApiError
@@ -40,7 +39,7 @@ base_filter = [
 ]
 
 print('Creating fastrun container')
-frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_cache=True)
+frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=True, cache=True)
 
 skip_to_insee = 0
 
@@ -55,13 +54,16 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
             if int(code_insee.replace('A', '0').replace('B', '0')) > skip_to_insee:
                 population = int(row[7])  # PMUN
 
-                item = ItemEntity()
-                item.claims.add(claims=[ExternalID(prop_nr='P374', value=str(code_insee)),
-                                        Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED)])
+                claims = [
+                    ExternalID(prop_nr='P374', value=str(code_insee)),
+                    Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED)
+                ]
 
-                write_required = frc.write_required(entity=item, use_cache=True, query_limit=1000000)
+                entities = frc.get_entities(claims=claims, cache=True, query_limit=1000000)
+                if not entities:
+                    continue
 
-                entities = frc.get_entities(claims=item.claims, use_cache=True, query_limit=1000000)
+                write_required = frc.write_required(claims=claims, entity_filter=entities, property_filter='P1082', cache=True, query_limit=1000000)
 
                 id_item = None
                 final_items = entities.copy()
@@ -88,7 +90,6 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
 
                 if write_required and id_item:
                     logging.info(f'Write to Wikidata for {row[6]} ({row[2]}) {code_insee} to {id_item}')
-                    item.id = id_item
                     try:
                         logging.debug('write')
                         update_item = wbi.item.get(id_item)
@@ -104,8 +105,7 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
                             if len(claim.references.references) > 1:
                                 claim.references.remove(reference_to_remove=Item(value=config.stated_in, prop_nr='P248'))
 
-                        update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED),
-                                               action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
+                        update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
                         update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'])
                     except MWApiError as e:

@@ -95,8 +95,8 @@ with open('annees/' + config.year + '/donnees_regions.csv', newline='', encoding
                             wb_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'])
                         except MWApiError as e:
                             logging.debug(e)
-                        finally:
-                            exit(0)
+                        # finally:
+                        #     exit(0)
                     else:
                         logging.debug(f'Skipping {row[1]} ({row[0]})')
 

@@ -55,7 +55,7 @@ with open('annees/' + config.year + '/donnees_departements.csv', newline='', enc
                 population = int(row[7])  # PMUN
 
                 # Search the Wikidata Element for this commune
-                id_items = frc.get_entities(claims=[ExternalID(prop_nr='P2586', value=str(code_insee))], use_cache=True)
+                id_items = frc.get_entities(claims=[ExternalID(prop_nr='P2586', value=str(code_insee))], cache=True)
 
                 if not id_items:
                     continue
@@ -107,7 +107,7 @@ with open('annees/' + config.year + '/donnees_departements.csv', newline='', enc
                                        action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
                     if write_needed:
-                        logging.debug(f'Write to Wikidata for {row[6]} ({row[2]})')
+                        logging.debug(f'Write to Wikidata for {row[3]} ({row[2]})')
                         try:
                             logging.debug('write')
                             wb_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'])
@@ -116,6 +116,6 @@ with open('annees/' + config.year + '/donnees_departements.csv', newline='', enc
                         # finally:
                         #    exit(0)
                     else:
-                        logging.debug(f'Skipping {row[6]} ({row[2]})')
+                        logging.debug(f'Skipping {row[3]} ({row[2]})')
 
 print("--- %s seconds ---" % (time.time() - start_time))

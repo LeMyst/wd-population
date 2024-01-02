@@ -19,16 +19,16 @@ login_instance = wbi_login.Login(user=config.user, password=config.password)
 
 wbi = WikibaseIntegrator(login=login_instance, is_bot=True)
 
-# logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
 
 qualifiers = [
-    Time(prop_nr='P585', time='+2019-01-01T00:00:00Z'),
-    Item(prop_nr='P459', value='Q39825')
+    Time(prop_nr='P585', time=config.point_in_time),  # point in time
+    Item(prop_nr='P459', value='Q39825')  # determination method: census
 ]
 
 references = [
     [
-        Item(value='Q110382235', prop_nr='P248')
+        Item(value=config.stated_in, prop_nr='P248')  # stated in: Populations légales 2020
     ]
 ]
 
@@ -44,7 +44,7 @@ frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=
 skip_to_insee = 0
 
 print('Start parsing CSV')
-with open('donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
+with open('annees/' + config.year + '/donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
     spamreader = csv.reader(csvfile, delimiter=';')
     start_time = time.time()
     for row in spamreader:
@@ -57,15 +57,16 @@ with open('donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
                 item.claims.add(claims=[ExternalID(prop_nr='P2586', value=str(code_insee)),
                                         Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED)])
 
-                write_required = frc.write_required(entity=item, use_cache=True)
+                write_required = frc.write_required(entity=item, cache=True)
 
-                if write_required and code_insee in frc.get_entities(claims=item.claims, use_cache=True):
+                if write_required and code_insee in frc.get_entities(claims=item.claims, cache=True):
                     logging.info(f'Write to Wikidata for {row[6]} ({row[2]}) {code_insee}')
-                    exit(0)
                     try:
-                        item.write(summary='Update population for 2019')
+                        item.write(summary='Update population for ' + config.year)
                     except MWApiError as e:
                         print(e)
+                    finally:
+                        exit(0)
                 else:
                     logging.info(f'Skipping {row[6]} ({row[2]})')
 

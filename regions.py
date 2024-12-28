@@ -1,18 +1,18 @@
 import csv
 import logging
 import time
+from datetime import datetime
 
-from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_helpers, wbi_login
+from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_login
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
-from wikibaseintegrator.entities import ItemEntity
 from wikibaseintegrator.wbi_config import config as wbi_config
-from wikibaseintegrator.wbi_enums import ActionIfExists, WikibaseRank
+from wikibaseintegrator.wbi_enums import ActionIfExists, EntityField, WikibaseRank
 from wikibaseintegrator.wbi_exceptions import MWApiError
 
 # Import local config for user and password
 import config
 
-wbi_config['USER_AGENT'] = 'Update French Population'
+wbi_config['USER_AGENT'] = 'WikibaseIntegrator/1.0 Update French Population'
 
 # login object
 login_instance = wbi_login.Login(user=config.user, password=config.password)
@@ -39,7 +39,7 @@ base_filter = [
 ]
 
 print('Creating fastrun container')
-frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter)
+frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=True, cache=True)
 
 skip_to_insee = 0
 
@@ -48,56 +48,77 @@ with open('annees/' + config.year + '/donnees_regions.csv', newline='', encoding
     spamreader = csv.reader(csvfile, delimiter=';')
     start_time = time.time()
     for row in spamreader:
+        id_item = None
         if row[0].isnumeric():
-            code_insee = row[0]
+            code_insee = row[0]  # REG
             if int(code_insee.replace('A', '0').replace('B', '0')) > skip_to_insee:
                 population = int(row[5])  # PMUN
 
-                # Search the Wikidata Element for this commune
-                id_items = frc.get_entities(claims=[ExternalID(prop_nr='P2585', value=str(code_insee))])
+                claims = [
+                    ExternalID(prop_nr='P2585', value=str(code_insee)),
+                    Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED)
+                ]
 
-                if not id_items:
+                entities = frc.get_entities(claims=claims, cache=True, query_limit=1000000)
+                if not entities:
                     continue
 
-                id_item = None
-                final_items = id_items.copy()
+                write_required = frc.write_required(claims=claims, entity_filter=entities, property_filter='P1082', cache=True, query_limit=1000000)
 
-                if not id_item and len(final_items) == 1:  # if only one item remains, we take it
-                    id_item = final_items.pop()
+                if write_required:
+                    id_item = None
+                    final_items = entities.copy()
 
-                if id_item:
-                    wb_item = ItemEntity(api=wbi).get(id_item)
-
-                    # Check if a write is needed or not
-                    write_needed = True
-                    for claim in wb_item.claims.get('P1082'):
-                        if claim.rank == WikibaseRank.PREFERRED:
-                            for qualifier in claim.qualifiers.get('P585'):
-                                if qualifier == qualifiers[0].mainsnak and claim.mainsnak.datavalue['value']['amount'] == wbi_helpers.format_amount(population):
-                                    write_needed = False
-                                    break
+                    if len(entities) > 1:
+                        for entity in entities:
+                            test_item = wbi.item.get(entity, props=['claims'])
+                            claims = test_item.claims.get('P31')  # instance of
+                            for claim in claims:
+                                if claim.mainsnak.datavalue['value']['id'] == 'Q36784':  # region of France (Q36784)
+                                    if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:  # start time (P580) and end time (P582)
+                                        d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
+                                        census = datetime.strptime(config.point_in_time, '+%Y-%m-%dT00:00:00Z')
+                                        if d.time() >= census.time():
+                                            id_item = entity
+                                            break
+                                    if 'P582' in claim.qualifiers_order:  # end time (P582)
+                                        final_items.remove(entity)  # If the item have an end time, we remove it from the list
                             else:
                                 continue
                             break
 
-                    # Set the preferred rank of others claims to normal
-                    for claim in wb_item.claims.get('P1082'):
-                        claim.rank = WikibaseRank.NORMAL
+                    if not id_item and len(final_items) == 1:  # if only one item remains, we take it
+                        id_item = final_items.pop()
+                    else:
+                        logging.info('not item left...')
 
-                    # Create the claim to add with references, qualifiers and preferred rank
-                    wb_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED),
-                                       action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
-
-                    if write_needed:
-                        logging.debug(f'Write to Wikidata for {row[1]} ({row[0]})')
+                    if id_item:
+                        logging.info(f'Write to Wikidata for {row[1]} {code_insee} to {id_item}')
                         try:
                             logging.debug('write')
-                            wb_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'])
+                            update_item = wbi.item.get(id_item, props=['claims'])
+
+                            for claim in update_item.claims.get('P1082'):
+                                claim.rank = WikibaseRank.NORMAL
+
+                                # Clean duplicate qualifiers
+                                if len(claim.qualifiers.get('P585')) > 1:
+                                    claim.qualifiers.remove(qualifier=Time(prop_nr='P585', time=config.point_in_time))
+
+                                # Clean duplicate references
+                                if len(claim.references.references) > 1:
+                                    claim.references.remove(reference_to_remove=Item(value=config.stated_in, prop_nr='P248'))
+
+                            update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
+
+                            update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS)
                         except MWApiError as e:
                             logging.debug(e)
                         # finally:
-                        #     exit(0)
+                        #   exit(0)
                     else:
-                        logging.debug(f'Skipping {row[1]} ({row[0]})')
+                        logging.info(f'Skipping {row[1]} {code_insee}')
+                else:
+                    logging.info(f'Write not required for {row[1]} {code_insee}')
 
 print("--- %s seconds ---" % (time.time() - start_time))

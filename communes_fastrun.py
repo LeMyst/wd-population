@@ -39,7 +39,7 @@ base_filter = [
 ]
 
 print('Creating fastrun container')
-frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=False, use_rank=False, cache=True)
+frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=True, cache=True)
 
 skip_to_insee = 0
 

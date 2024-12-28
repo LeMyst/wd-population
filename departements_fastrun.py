@@ -5,15 +5,14 @@ from datetime import datetime
 
 from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_login
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
-from wikibaseintegrator.entities import ItemEntity
 from wikibaseintegrator.wbi_config import config as wbi_config
-from wikibaseintegrator.wbi_enums import ActionIfExists, WikibaseRank
+from wikibaseintegrator.wbi_enums import ActionIfExists, EntityField, WikibaseRank
 from wikibaseintegrator.wbi_exceptions import MWApiError
 
 # Import local config for user and password
 import config
 
-wbi_config['USER_AGENT'] = 'Update French Population'
+wbi_config['USER_AGENT'] = 'WikibaseIntegrator/1.0 Update French Population'
 
 # login object
 login_instance = wbi_login.Login(user=config.user, password=config.password)
@@ -40,7 +39,7 @@ base_filter = [
 ]
 
 print('Creating fastrun container')
-frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=False, use_references=False)
+frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=True, cache=True)
 
 skip_to_insee = 0
 
@@ -49,18 +48,20 @@ with open('annees/' + config.year + '/donnees_departements.csv', newline='', enc
     spamreader = csv.reader(csvfile, delimiter=';')
     start_time = time.time()
     for row in spamreader:
+        id_item = None
         if row[0].isnumeric():
-            code_insee = row[2]
+            code_insee = row[2]  # DEP
             if int(code_insee.replace('A', '0').replace('B', '0')) > skip_to_insee:
                 population = int(row[7])  # PMUN
 
-                claims=[
+                claims = [
                     ExternalID(prop_nr='P2586', value=str(code_insee)),
                     Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED)
                 ]
 
                 entities = frc.get_entities(claims=claims, cache=True, query_limit=1000000)
                 if not entities:
+                    logging.info(f'No item found for {row[3]} ({row[2]}) {code_insee}')
                     continue
 
                 write_required = frc.write_required(claims=claims, entity_filter=entities, property_filter='P1082', cache=True, query_limit=1000000)
@@ -68,9 +69,10 @@ with open('annees/' + config.year + '/donnees_departements.csv', newline='', enc
                 if write_required:
                     id_item = None
                     final_items = entities.copy()
+
                     if len(entities) > 1:
                         for entity in entities:
-                            test_item = wbi.item.get(entity)
+                            test_item = wbi.item.get(entity, props=['claims'])
                             claims = test_item.claims.get('P31')  # instance of
                             for claim in claims:
                                 if claim.mainsnak.datavalue['value']['id'] == 'Q6465':  # department of France (Q6465)
@@ -96,7 +98,7 @@ with open('annees/' + config.year + '/donnees_departements.csv', newline='', enc
                         logging.info(f'Write to Wikidata for {row[3]} ({row[2]}) {code_insee} to {id_item}')
                         try:
                             logging.debug('write')
-                            update_item = wbi.item.get(id_item)
+                            update_item = wbi.item.get(id_item, props=['claims'])
 
                             for claim in update_item.claims.get('P1082'):
                                 claim.rank = WikibaseRank.NORMAL
@@ -110,13 +112,12 @@ with open('annees/' + config.year + '/donnees_departements.csv', newline='', enc
                                     claim.references.remove(reference_to_remove=Item(value=config.stated_in, prop_nr='P248'))
 
                             update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
-                            #update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'])
+
+                            update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS)
                         except MWApiError as e:
                             logging.debug(e)
-                        except Exception as e:
-                            logging.debug(e)
-                        #finally:
-                        #    exit(0)
+                        # finally:
+                        #   exit(0)
                     else:
                         logging.info(f'Skipping {row[3]} ({row[2]}) for item {id_item}')
                 else:

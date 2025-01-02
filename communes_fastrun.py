@@ -80,10 +80,12 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
                                         d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
                                         census = datetime.strptime(config.point_in_time, '+%Y-%m-%dT00:00:00Z')
                                         if d.time() >= census.time():
-                                            id_item = entity
+                                            final_items.remove(entity)  # If the item have a start time after the census date, we remove it from the list
+                                            print('start time is after census date, removing')
                                             break
                                     if 'P582' in claim.qualifiers_order:  # end time (P582)
                                         final_items.remove(entity)  # If the item have an end time, we remove it from the list
+                                        print('end time found, removing')
                             else:
                                 continue
                             break

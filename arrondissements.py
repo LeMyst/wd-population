@@ -28,7 +28,7 @@ qualifiers = [
 
 references = [
     [
-        Item(value=config.stated_in, prop_nr='P248')  # stated in: Populations légales 2020
+        Item(value=config.stated_in, prop_nr='P248')  # stated in: XXX
     ]
 ]
 
@@ -84,11 +84,33 @@ with open('annees/' + config.year + '/donnees_arrondissements.csv', newline='', 
                                             break
                                     if 'P582' in claim.qualifiers_order:  # end time (P582)
                                         final_items.remove(entity)  # If the item have an end time, we remove it from the list
-                            else:
-                                continue
-                            break
+
+                            # Find the insee code and remove the ones with end date
+                            insee_claims = test_item.claims.get('P3423')
+                            for insee_claim in insee_claims:
+                                logging.debug(f'insee_claim: {insee_claim.qualifiers_order}')
+                                logging.debug(f'insee_claim value: {insee_claim.mainsnak.datavalue['value']}')
+                                # Test if the insee value is the same as the one we are looking for
+                                if insee_claim.mainsnak.datavalue['value'] != code_insee:
+                                    logging.debug(f'remove {entity} with wrong insee code')
+                                    final_items.remove(entity)
+                                    continue
+                                if 'P580' in insee_claim.qualifiers_order and 'P582' not in insee_claim.qualifiers_order:  # start time (P580) and end time (P582)
+                                    d = datetime.strptime(insee_claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
+                                    census = datetime.strptime(config.point_in_time, '+%Y-%m-%dT00:00:00Z')
+                                    if d.time() >= census.time():
+                                        logging.debug(f'found {entity} with start time')
+                                        id_item = entity
+                                        continue
+                                if 'P582' in insee_claim.qualifiers_order:
+                                    logging.debug(f'remove {entity} with end time')
+                                    if entity in final_items:
+                                        final_items.remove(entity)
+
+                    logging.debug(f'final_items: {final_items}')
 
                     if not id_item and len(final_items) == 1:  # if only one item remains, we take it
+                        logging.debug(f'only one item remains: {final_items[0]}')
                         id_item = final_items.pop()
 
                     if id_item:
@@ -113,8 +135,8 @@ with open('annees/' + config.year + '/donnees_arrondissements.csv', newline='', 
                             update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS)
                         except MWApiError as e:
                             logging.debug(e)
-                        # finally:
-                        #   exit(0)
+                        finally:
+                            exit(0)
                     else:
                         logging.info(f'Skipping {row[6]} ({row[2]}) for item {id_item}')
                 else:

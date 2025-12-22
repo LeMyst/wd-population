@@ -28,12 +28,12 @@ qualifiers = [
 
 references = [
     [
-        Item(value=config.stated_in, prop_nr='P248')  # stated in: Populations légales 2020
+        Item(value=config.stated_in, prop_nr='P248')  # stated in: XXX
     ]
 ]
 
 base_filter = [
-    Item(prop_nr='P31', value='Q484170'),  # instance of commune of France
+    Item(prop_nr='P31', value='Q702842'),  # instance of municipal arrondissement
     Item(prop_nr='P17', value='Q142'),  # country France
     ExternalID(prop_nr='P374')  # INSEE municipality code
 ]
@@ -48,6 +48,10 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
     spamreader = csv.reader(csvfile, delimiter=';')
     start_time = time.time()
     for row in spamreader:
+        # Continue if name starts with Paris, Lyon or Marseille
+        if not row[7].startswith('Paris ') and not row[7].startswith('Lyon ') and not row[7].startswith('Marseille '):
+            continue
+
         id_item = None
         if row[0].isnumeric():
             code_insee = row[6]  # COM
@@ -71,60 +75,24 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
                     final_items = entities.copy()
 
                     if len(entities) > 1:
-                        census = datetime.strptime(config.point_in_time, '+%Y-%m-%dT00:00:00Z')
                         for entity in entities:
                             test_item = wbi.item.get(entity, props=['claims'])
-
-                            # Test if P576 exists, in this case remove the item from the list and continue
-                            if 'P576' in test_item.claims:
-                                dissolved_claims = test_item.claims.get('P576')
-                                # Test if mainsnak value is after the census date
-                                d = datetime.strptime(dissolved_claims[0].mainsnak.datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                if d.time() >= census.time():
-                                    final_items.remove(entity)
-                                    logging.debug(f'remove {entity} with P576 after census date')
-                                    continue
-
-                            if len(final_items) == 1:
-                                break
-
                             claims = test_item.claims.get('P31')  # instance of
                             for claim in claims:
-                                if claim.mainsnak.datavalue['value']['id'] == 'Q484170':  # commune of France (Q484170)
+                                if claim.mainsnak.datavalue['value']['id'] == 'Q702842':  # municipal arrondissement (Q702842)
                                     if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:  # start time (P580) and end time (P582)
                                         d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
+                                        census = datetime.strptime(config.point_in_time, '+%Y-%m-%dT00:00:00Z')
                                         if d.time() >= census.time():
                                             final_items.remove(entity)  # If the item have a start time after the census date, we remove it from the list
-                                            logging.info('start time is after census date, removing')
-                                            continue
+                                            print('start time is after census date, removing')
+                                            break
                                     if 'P582' in claim.qualifiers_order:  # end time (P582)
                                         final_items.remove(entity)  # If the item have an end time, we remove it from the list
-                                        logging.info('end time found, removing')
-                                        continue
-
-                            if len(final_items) == 1:
-                                break
-
-                            # Find the insee code and remove the ones with end date
-                            insee_claims = test_item.claims.get('P374')
-                            for insee_claim in insee_claims:
-                                logging.debug(f'insee_claim: {insee_claim.qualifiers_order}')
-                                logging.debug(f'insee_claim value: {insee_claim.mainsnak.datavalue['value']}')
-                                # Test if the insee value is the same as the one we are looking for
-                                if insee_claim.mainsnak.datavalue['value'] != code_insee:
-                                    logging.debug(f'remove {entity} with wrong insee code')
-                                    final_items.remove(entity)
-                                    continue
-                                if 'P580' in insee_claim.qualifiers_order and 'P582' not in insee_claim.qualifiers_order:  # start time (P580) and end time (P582)
-                                    d = datetime.strptime(insee_claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                    if d.time() >= census.time():
-                                        logging.debug(f'found {entity} with start time')
-                                        id_item = entity
-                                        continue
-                                if 'P582' in insee_claim.qualifiers_order:
-                                    logging.debug(f'remove {entity} with end time')
-                                    if entity in final_items:
-                                        final_items.remove(entity)
+                                        print('end time found, removing')
+                            else:
+                                continue
+                            break
 
                     if not id_item and len(final_items) == 1:  # if only one item remains, we take it
                         id_item = final_items.pop()
@@ -148,14 +116,13 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
 
                             update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
-                            # update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS)
+                            update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS)
                         except MWApiError as e:
                             logging.debug(e)
-                        finally:
-                            exit(0)
+                        # finally:
+                        #   exit(0)
                     else:
                         logging.info(f'Skipping {row[7]} ({row[2]}) for item {id_item}')
-                        logging.debug(f'Final items: {final_items}')
                 else:
                     logging.info(f'Write not required for {row[7]} ({row[2]})')
 

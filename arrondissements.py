@@ -71,14 +71,25 @@ with open('annees/' + config.year + '/donnees_arrondissements.csv', newline='', 
                     final_items = entities.copy()
 
                     if len(entities) > 1:
+                        census = datetime.strptime(config.point_in_time, '+%Y-%m-%dT00:00:00Z')
                         for entity in entities:
                             test_item = wbi.item.get(entity, props=['claims'])
+
+                            # Test if P576 exists, in this case remove the item from the list and continue
+                            if 'P576' in test_item.claims:
+                                dissolved_claims = test_item.claims.get('P576')
+                                # Test if mainsnak value is after the census date
+                                d = datetime.strptime(dissolved_claims[0].mainsnak.datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
+                                if d.time() >= census.time():
+                                    logging.debug(f'remove {entity} with P576 after census date')
+                                    final_items.remove(entity)
+                                    continue
+
                             claims = test_item.claims.get('P31')  # instance of
                             for claim in claims:
                                 if claim.mainsnak.datavalue['value']['id'] == 'Q194203':  # arrondissement of France (Q194203)
                                     if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:  # start time (P580) and end time (P582)
                                         d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                        census = datetime.strptime(config.point_in_time, '+%Y-%m-%dT00:00:00Z')
                                         if d.time() >= census.time():
                                             id_item = entity
                                             break
@@ -97,7 +108,6 @@ with open('annees/' + config.year + '/donnees_arrondissements.csv', newline='', 
                                     continue
                                 if 'P580' in insee_claim.qualifiers_order and 'P582' not in insee_claim.qualifiers_order:  # start time (P580) and end time (P582)
                                     d = datetime.strptime(insee_claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                    census = datetime.strptime(config.point_in_time, '+%Y-%m-%dT00:00:00Z')
                                     if d.time() >= census.time():
                                         logging.debug(f'found {entity} with start time')
                                         id_item = entity
@@ -106,8 +116,6 @@ with open('annees/' + config.year + '/donnees_arrondissements.csv', newline='', 
                                     logging.debug(f'remove {entity} with end time')
                                     if entity in final_items:
                                         final_items.remove(entity)
-
-                    logging.debug(f'final_items: {final_items}')
 
                     if not id_item and len(final_items) == 1:  # if only one item remains, we take it
                         logging.debug(f'only one item remains: {final_items[0]}')
@@ -135,10 +143,11 @@ with open('annees/' + config.year + '/donnees_arrondissements.csv', newline='', 
                             update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS)
                         except MWApiError as e:
                             logging.debug(e)
-                        finally:
-                            exit(0)
+                        # finally:
+                        #     exit(0)
                     else:
-                        logging.info(f'Skipping {row[6]} ({row[2]}) for item {id_item}')
+                        logging.info(f'Skipping {row[6]} ({row[2]}), no item found')
+                        logging.info(f'final_items: {final_items}')
                 else:
                     logging.info(f'Write not required for {row[6]} ({row[2]})')
 

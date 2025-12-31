@@ -38,6 +38,16 @@ base_filter = [
     ExternalID(prop_nr='P374')  # INSEE municipality code
 ]
 
+def parse_wb_time(time_str):
+    """Normalize and parse Wikibase time strings like '+2020-00-00T00:00:00Z'."""
+    if not time_str:
+        return None
+    normalized = time_str.replace('-00-00T', '-01-01T')
+    try:
+        return datetime.strptime(normalized, '+%Y-%m-%dT%H:%M:%SZ')
+    except Exception:
+        return None
+
 print('Creating fastrun container')
 frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=True, cache=True)
 
@@ -78,11 +88,20 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
                             # Test if P576 exists, in this case remove the item from the list and continue
                             if 'P576' in test_item.claims:
                                 dissolved_claims = test_item.claims.get('P576')
-                                # Test if mainsnak value is after the census date
-                                d = datetime.strptime(dissolved_claims[0].mainsnak.datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                if d.time() >= census.time():
-                                    final_items.remove(entity)
-                                    logging.debug(f'remove {entity} with P576 after census date')
+                                removed_by_dissolution = False
+                                for dc in dissolved_claims:
+                                    try:
+                                        time_str = dc.mainsnak.datavalue.get('value', {}).get('time') if hasattr(dc.mainsnak, 'datavalue') else None
+                                    except Exception:
+                                        time_str = None
+                                    d = parse_wb_time(time_str)
+                                    if d and d < census:  # if dissolved before census, remove
+                                        if entity in final_items:
+                                            final_items.remove(entity)
+                                        removed_by_dissolution = True
+                                        logging.debug(f'remove {entity} with P576 before census date ({d.isoformat()})')
+                                        break
+                                if removed_by_dissolution:
                                     continue
 
                             if len(final_items) == 1:
@@ -91,10 +110,11 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
                             claims = test_item.claims.get('P31')  # instance of
                             for claim in claims:
                                 if claim.mainsnak.datavalue['value']['id'] == 'Q484170':  # commune of France (Q484170)
-                                    if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:  # start time (P580) and end time (P582)
-                                        d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                        if d.time() >= census.time():
-                                            final_items.remove(entity)  # If the item have a start time after the census date, we remove it from the list
+                                    if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:
+                                        stime_str = claim.qualifiers.get('P580')[0].datavalue['value']['time']
+                                        d = parse_wb_time(stime_str)
+                                        if d and d >= census:
+                                            final_items.remove(entity)  # start time after census -> remove
                                             logging.info('start time is after census date, removing')
                                             continue
                                     if 'P582' in claim.qualifiers_order:  # end time (P582)
@@ -109,16 +129,17 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
                             insee_claims = test_item.claims.get('P374')
                             for insee_claim in insee_claims:
                                 logging.debug(f'insee_claim: {insee_claim.qualifiers_order}')
-                                logging.debug(f'insee_claim value: {insee_claim.mainsnak.datavalue['value']}')
+                                logging.debug(f"insee_claim value: {insee_claim.mainsnak.datavalue['value']}")
                                 # Test if the insee value is the same as the one we are looking for
                                 if insee_claim.mainsnak.datavalue['value'] != code_insee:
                                     logging.debug(f'remove {entity} with wrong insee code')
                                     final_items.remove(entity)
                                     continue
-                                if 'P580' in insee_claim.qualifiers_order and 'P582' not in insee_claim.qualifiers_order:  # start time (P580) and end time (P582)
-                                    d = datetime.strptime(insee_claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                    if d.time() >= census.time():
-                                        logging.debug(f'found {entity} with start time')
+                                if 'P580' in insee_claim.qualifiers_order and 'P582' not in insee_claim.qualifiers_order:
+                                    stime_str = insee_claim.qualifiers.get('P580')[0].datavalue['value']['time']
+                                    d = parse_wb_time(stime_str)
+                                    if d and d >= census:
+                                        logging.debug(f'found {entity} with start time ({d.isoformat()})')
                                         id_item = entity
                                         continue
                                 if 'P582' in insee_claim.qualifiers_order:
@@ -148,7 +169,7 @@ with open('annees/' + config.year + '/donnees_communes.csv', newline='', encodin
 
                             update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
-                            # update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS)
+                            update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS)
                         except MWApiError as e:
                             logging.debug(e)
                         finally:

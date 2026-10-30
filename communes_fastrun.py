@@ -248,7 +248,14 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
 
                                 new_rank = WikibaseRank.PREFERRED if is_most_recent else WikibaseRank.NORMAL
                                 current_qualifiers = qualifiers_preferred if is_most_recent else qualifiers
-                                update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=current_qualifiers, rank=new_rank), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
+                                new_claim = Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=current_qualifiers, rank=new_rank)
+
+                                # Re-adding an existing claim with the normal rank keeps its current rank, set it explicitly
+                                for claim in update_item.claims.get('P1082'):
+                                    if claim == new_claim:
+                                        claim.rank = new_rank
+
+                                update_item.claims.add(claims=new_claim, action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
                                 bot.write(update_item, summary='Update population for ' + year)
 

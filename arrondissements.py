@@ -59,10 +59,10 @@ with open(f'annees/{year}/donnees_arrondissements.csv', newline='', encoding='ut
                             # Test if P576 exists, in this case remove the item from the list and continue
                             if 'P576' in test_item.claims:
                                 dissolved_claims = test_item.claims.get('P576')
-                                # Test if mainsnak value is after the census date
+                                # Test if mainsnak value is before the census date
                                 d = datetime.strptime(dissolved_claims[0].mainsnak.datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                if d.time() >= census.time():
-                                    logging.debug(f'remove {entity} with P576 after census date')
+                                if d < census:  # if dissolved before census, remove
+                                    logging.debug(f'remove {entity} with P576 before census date ({d.isoformat()})')
                                     final_items.remove(entity)
                                     continue
 
@@ -71,7 +71,7 @@ with open(f'annees/{year}/donnees_arrondissements.csv', newline='', encoding='ut
                                 if claim.mainsnak.datavalue['value']['id'] == 'Q194203':  # arrondissement of France (Q194203)
                                     if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:  # start time (P580) and end time (P582)
                                         d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                        if d.time() >= census.time():
+                                        if d >= census:
                                             id_item = entity
                                             break
                                     if 'P582' in claim.qualifiers_order:  # end time (P582)
@@ -89,7 +89,7 @@ with open(f'annees/{year}/donnees_arrondissements.csv', newline='', encoding='ut
                                     continue
                                 if 'P580' in insee_claim.qualifiers_order and 'P582' not in insee_claim.qualifiers_order:  # start time (P580) and end time (P582)
                                     d = datetime.strptime(insee_claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                    if d.time() >= census.time():
+                                    if d >= census:
                                         logging.debug(f'found {entity} with start time')
                                         id_item = entity
                                         continue

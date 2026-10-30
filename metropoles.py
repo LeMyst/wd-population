@@ -1,40 +1,20 @@
 import csv
 import logging
 from datetime import datetime
-from importlib.machinery import SourceFileLoader
 
-from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_login
+from wikibaseintegrator import wbi_fastrun
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
-from wikibaseintegrator.wbi_config import config as wbi_config
-from wikibaseintegrator.wbi_enums import ActionIfExists, EntityField, WikibaseRank
+from wikibaseintegrator.wbi_enums import ActionIfExists, WikibaseRank
 from wikibaseintegrator.wbi_exceptions import MWApiError
 
-import config
+from common import Bot, parse_wb_time, point_in_time, qualifiers, references, stated_in, year
 
-wbi_config['USER_AGENT'] = 'WikibaseIntegrator/1.0 Update French Population'
+bot = Bot('Update Paris, Lyon and Marseille population on Wikidata')
+wbi = bot.wbi
 
-login_instance = wbi_login.Login(user=config.user, password=config.password)
-wbi = WikibaseIntegrator(login=login_instance, is_bot=True)
-
-logging.basicConfig(level=logging.DEBUG)
-
-year = str(config.year)
 is_latest = year == '2023'
 
-# Date of the census
-point_in_time = f'+{year}-01-01T00:00:00Z'
 geographic_point_in_time = f'+{str(int(year) + 2)}-01-01T00:00:00Z'
-
-qualifiers = [
-    Time(prop_nr='P585', time=point_in_time),
-    Item(prop_nr='P459', value='Q39825')  # method: census
-]
-
-stated_in = SourceFileLoader('stated_in', 'annees/' + year + '/config.py').load_module().stated_in
-
-references = [
-    [Item(value=stated_in, prop_nr='P248')]
-]
 
 # Definition of the Metropoles and their Arrondissements ranges
 targets = {
@@ -47,17 +27,6 @@ base_filter = [
     Item(prop_nr='P17', value='Q142'),  # country -> France
     ExternalID(prop_nr='P374')  # INSEE municipality code
 ]
-
-
-def parse_wb_time(time_str):
-    if not time_str:
-        return None
-    normalized = time_str.replace('-00-00T', '-01-01T')
-    try:
-        return datetime.strptime(normalized, '+%Y-%m-%dT%H:%M:%SZ')
-    except Exception:
-        return None
-
 
 print('Creating fastrun container')
 frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=is_latest, cache=True)
@@ -187,7 +156,7 @@ for code_insee, data in targets.items():
                 new_rank = WikibaseRank.PREFERRED if is_most_recent else WikibaseRank.NORMAL
                 update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=new_rank), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
-                update_item.write(summary='Update population (metropole) for ' + year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS)
+                bot.write(update_item, summary='Update population (metropole) for ' + year)
                 logging.info(f'Successfully updated {name} ({id_item})')
             except MWApiError as e:
                 logging.error(f'Error updating {name}: {e}')

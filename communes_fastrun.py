@@ -1,77 +1,32 @@
-import argparse
 import csv
 import logging
 import os
 import time
 from datetime import datetime
-from importlib.machinery import SourceFileLoader
 
-from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_login
+from wikibaseintegrator import wbi_fastrun
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
-from wikibaseintegrator.wbi_config import config as wbi_config
-from wikibaseintegrator.wbi_enums import ActionIfExists, EntityField, WikibaseRank
+from wikibaseintegrator.wbi_enums import ActionIfExists, WikibaseRank
 from wikibaseintegrator.wbi_exceptions import MWApiError
 
-# Import local config for user and password
-import config
+from common import Bot, parse_wb_time, point_in_time, qualifiers, references, stated_in, year
 
-parser = argparse.ArgumentParser(description='Update French communes population on Wikidata')
-parser.add_argument('--dry-run', action='store_true', help='do not write anything to Wikidata, only log what would be written')
-args = parser.parse_args()
-
-wbi_config['USER_AGENT'] = 'WikibaseIntegrator/1.0 Update French Population'
-
-# login object
-login_instance = wbi_login.Login(user=config.user, password=config.password)
-
-wbi = WikibaseIntegrator(login=login_instance, is_bot=True)
-
-logging.basicConfig(level=logging.DEBUG)
-
-year = str(config.year)
+bot = Bot('Update French communes population on Wikidata')
+wbi = bot.wbi
 
 is_latest = year == '2023'
-
-# Date of the census
-point_in_time = f'+{year}-01-01T00:00:00Z'
 
 # Date for geographic point in time (2 years later)
 # Because population take into account the new communes created until 1st January of year+2 inclusive
 geographic_point_in_time = f'+{str(int(year) + 2)}-01-01T00:00:00Z'
 
-qualifiers = [
-    Time(prop_nr='P585', time=point_in_time),  # point in time
-    Item(prop_nr='P459', value='Q39825')  # determination method: census
-]
-
 qualifiers_preferred = qualifiers + [Item(prop_nr='P7452', value='Q71533355')]
-
-# Load year specific config
-stated_in = SourceFileLoader('stated_in', 'annees/' + year + '/config.py').load_module().stated_in
-
-references = [
-    [
-        Item(value=stated_in, prop_nr='P248')  # stated in: Populations légales 2020
-    ]
-]
 
 base_filter = [
     Item(prop_nr='P31', value='Q484170'),  # instance of commune of France
     Item(prop_nr='P17', value='Q142'),  # country France
     ExternalID(prop_nr='P374')  # INSEE municipality code
 ]
-
-
-def parse_wb_time(time_str):
-    """Normalize and parse Wikibase time strings like '+2020-00-00T00:00:00Z'."""
-    if not time_str:
-        return None
-    normalized = time_str.replace('-00-00T', '-01-01T')
-    try:
-        return datetime.strptime(normalized, '+%Y-%m-%dT%H:%M:%SZ')
-    except Exception:
-        return None
-
 
 print('Creating fastrun container')
 frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=is_latest, cache=True)
@@ -242,10 +197,7 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                                     logging.info(f'Removing {len(claims_to_remove)} wrong P1082 claims from {entity}')
                                     for c in claims_to_remove:
                                         c.remove()
-                                    if args.dry_run:
-                                        logging.info(f'[dry-run] Would remove {len(claims_to_remove)} P1082 claims from {entity}')
-                                    else:
-                                        test_item.write(summary='Remove wrong population for ' + year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, retry_after=300)
+                                    bot.write(test_item, summary='Remove wrong population for ' + year)
 
                     if not id_item and len(final_items) == 1:  # if only one item remains, we take it
                         id_item = final_items.pop()
@@ -298,14 +250,10 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                                 current_qualifiers = qualifiers_preferred if is_most_recent else qualifiers
                                 update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=current_qualifiers, rank=new_rank), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
-                                if args.dry_run:
-                                    logging.info(f'[dry-run] Would write P1082 = {population} (rank {new_rank.value}) to {id_item}')
-                                    for claim in update_item.claims.get('P1082'):
-                                        logging.debug(f'[dry-run] {claim.get_json()}')
-                                else:
-                                    update_item.write(summary='Update population for ' + year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, retry_after=300)
+                                bot.write(update_item, summary='Update population for ' + year)
 
-                                    # Save the latest edited edited entity insee code
+                                # Save the latest edited edited entity insee code
+                                if not bot.dry_run:
                                     with open(f'annees/{year}/last_edited.txt', 'w') as f:
                                         f.write(code_insee)
                             except MWApiError as e:
@@ -321,7 +269,7 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                     logging.info(f'Write not required for {row[7]} ({row[2]})')
 
 # Remove last edited file when done (kept on dry run to not lose the resume point of a real run)
-if not args.dry_run:
+if not bot.dry_run:
     try:
         os.remove(f'annees/{year}/last_edited.txt')
     except FileNotFoundError:

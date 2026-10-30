@@ -3,34 +3,15 @@ import logging
 import time
 from datetime import datetime
 
-from wikibaseintegrator import WikibaseIntegrator, wbi_fastrun, wbi_login
+from wikibaseintegrator import wbi_fastrun
 from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
-from wikibaseintegrator.wbi_config import config as wbi_config
-from wikibaseintegrator.wbi_enums import ActionIfExists, EntityField, WikibaseRank
+from wikibaseintegrator.wbi_enums import ActionIfExists, WikibaseRank
 from wikibaseintegrator.wbi_exceptions import MWApiError
 
-# Import local config for user and password
-import config
+from common import Bot, point_in_time, qualifiers, references, stated_in, year
 
-wbi_config['USER_AGENT'] = 'WikibaseIntegrator/1.0 Update French Population'
-
-# login object
-login_instance = wbi_login.Login(user=config.user, password=config.password)
-
-wbi = WikibaseIntegrator(login=login_instance, is_bot=True)
-
-logging.basicConfig(level=logging.DEBUG)
-
-qualifiers = [
-    Time(prop_nr='P585', time=config.point_in_time),  # point in time
-    Item(prop_nr='P459', value='Q39825')  # determination method: census
-]
-
-references = [
-    [
-        Item(value=config.stated_in, prop_nr='P248')  # stated in: XXX
-    ]
-]
+bot = Bot('Update French departments population on Wikidata')
+wbi = bot.wbi
 
 base_filter = [
     Item(prop_nr='P31', value='Q6465'),  # instance of department of France
@@ -44,7 +25,7 @@ frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=
 skip_to_insee = 0
 
 print('Start parsing CSV')
-with open('annees/' + config.year + '/donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
+with open(f'annees/{year}/donnees_departements.csv', newline='', encoding='utf-8') as csvfile:
     spamreader = csv.reader(csvfile, delimiter=';')
     start_time = time.time()
     for row in spamreader:
@@ -78,7 +59,7 @@ with open('annees/' + config.year + '/donnees_departements.csv', newline='', enc
                                 if claim.mainsnak.datavalue['value']['id'] == 'Q6465':  # department of France (Q6465)
                                     if 'P580' in claim.qualifiers_order and 'P582' not in claim.qualifiers_order:  # start time (P580) and end time (P582)
                                         d = datetime.strptime(claim.qualifiers.get('P580')[0].datavalue['value']['time'].replace('-00-00T', '-01-01T'), '+%Y-%m-%dT00:00:00Z')
-                                        census = datetime.strptime(config.point_in_time, '+%Y-%m-%dT00:00:00Z')
+                                        census = datetime.strptime(point_in_time, '+%Y-%m-%dT00:00:00Z')
                                         if d.time() >= census.time():
                                             id_item = entity
                                             break
@@ -105,15 +86,15 @@ with open('annees/' + config.year + '/donnees_departements.csv', newline='', enc
 
                                 # Clean duplicate qualifiers
                                 if len(claim.qualifiers.get('P585')) > 1:
-                                    claim.qualifiers.remove(qualifier=Time(prop_nr='P585', time=config.point_in_time))
+                                    claim.qualifiers.remove(qualifier=Time(prop_nr='P585', time=point_in_time))
 
                                 # Clean duplicate references
                                 if len(claim.references.references) > 1:
-                                    claim.references.remove(reference_to_remove=Item(value=config.stated_in, prop_nr='P248'))
+                                    claim.references.remove(reference_to_remove=Item(value=stated_in, prop_nr='P248'))
 
                             update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
-                            update_item.write(summary='Update population for ' + config.year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS)
+                            bot.write(update_item, summary='Update population for ' + year)
                         except MWApiError as e:
                             logging.debug(e)
                         # finally:

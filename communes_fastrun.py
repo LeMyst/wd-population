@@ -39,6 +39,8 @@ qualifiers = [
     Item(prop_nr='P459', value='Q39825')  # determination method: census
 ]
 
+qualifiers_preferred = qualifiers + [Item(prop_nr='P7452', value='Q71533355')]
+
 # Load year specific config
 stated_in = SourceFileLoader('stated_in', 'annees/' + year + '/config.py').load_module().stated_in
 
@@ -98,7 +100,7 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
 
                 claims = [
                     ExternalID(prop_nr='P374', value=str(code_insee)),
-                    Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED)
+                    Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers_preferred, rank=WikibaseRank.PREFERRED)
                 ]
 
                 entities = frc.get_entities(claims=claims, cache=True, query_limit=1000000)
@@ -138,22 +140,36 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
 
                             if not should_remove:
                                 claims_p31 = test_item.claims.get('P31')  # instance of
-                                for claim in claims_p31:
-                                    if claim.mainsnak.datavalue['value']['id'] == 'Q484170':  # commune of France (Q484170)
+                                commune_claims = [c for c in claims_p31 if c.mainsnak.datavalue['value']['id'] == 'Q484170']
+
+                                if commune_claims:
+                                    # Filter by rank: if any preferred claim exists, only consider preferred claims
+                                    preferred_claims = [c for c in commune_claims if c.rank == WikibaseRank.PREFERRED]
+                                    if preferred_claims:
+                                        commune_claims = preferred_claims
+
+                                    has_valid_commune_claim = False
+                                    for claim in commune_claims:
+                                        is_this_claim_valid = True
                                         if 'P580' in claim.qualifiers_order:
                                             stime_str = claim.qualifiers.get('P580')[0].datavalue['value']['time']
                                             d = parse_wb_time(stime_str)
                                             if d and d > census:
-                                                should_remove = True
-                                                logging.info('start time is after census date, removing')
-                                                break
-                                        if 'P582' in claim.qualifiers_order:  # end time (P582)
+                                                is_this_claim_valid = False
+
+                                        if is_this_claim_valid and 'P582' in claim.qualifiers_order:  # end time (P582)
                                             etime_str = claim.qualifiers.get('P582')[0].datavalue['value']['time']
                                             d = parse_wb_time(etime_str)
                                             if d and d < census:
-                                                should_remove = True
-                                                logging.info('end time is before census date, removing')
-                                                break
+                                                is_this_claim_valid = False
+
+                                        if is_this_claim_valid:
+                                            has_valid_commune_claim = True
+                                            break
+
+                                    if not has_valid_commune_claim:
+                                        should_remove = True
+                                        logging.info('No valid P31 Q484170 claim for census date, removing')
 
                             # Find the insee code and remove the ones with end date
                             if not should_remove:
@@ -191,6 +207,20 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                             if should_remove:
                                 if entity in final_items:
                                     final_items.remove(entity)
+
+                                is_future = False
+                                if 'P31' in test_item.claims:
+                                    for claim in test_item.claims.get('P31'):
+                                        if claim.mainsnak.datavalue['value']['id'] == 'Q484170':
+                                            if 'P580' in claim.qualifiers_order:
+                                                stime_str = claim.qualifiers.get('P580')[0].datavalue['value']['time']
+                                                d = parse_wb_time(stime_str)
+                                                if d and d > census:
+                                                    is_future = True
+                                                    break
+                                if is_future:
+                                    logging.debug(f'Skipping removal for {entity} because it starts in the future')
+                                    continue
 
                                 claims_to_remove = []
                                 for claim in test_item.claims.get('P1082'):
@@ -244,6 +274,10 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                                     if is_most_recent:
                                         claim.rank = WikibaseRank.NORMAL
 
+                                        # Clean P7452 from previous preferred claims
+                                        if 'P7452' in claim.qualifiers_order:
+                                            claim.qualifiers.remove(qualifier=Item(prop_nr='P7452', value='Q71533355'))
+
                                     # Clean duplicate qualifiers
                                     if len(claim.qualifiers.get('P585')) > 1:
                                         claim.qualifiers.remove(qualifier=Time(prop_nr='P585', time=point_in_time))
@@ -253,7 +287,8 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                                         claim.references.remove(reference_to_remove=Item(value=stated_in, prop_nr='P248'))
 
                                 new_rank = WikibaseRank.PREFERRED if is_most_recent else WikibaseRank.NORMAL
-                                update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=new_rank), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
+                                current_qualifiers = qualifiers_preferred if is_most_recent else qualifiers
+                                update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=current_qualifiers, rank=new_rank), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
                                 update_item.write(summary='Update population for ' + year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, retry_after=300)
 
@@ -271,6 +306,7 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                         logging.debug(f'Final items: {final_items}')
                 else:
                     logging.info(f'Write not required for {row[7]} ({row[2]})')
+                exit(0)
 
 # Remove last edited file when done
 try:

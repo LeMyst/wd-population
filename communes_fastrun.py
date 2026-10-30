@@ -1,3 +1,4 @@
+import argparse
 import csv
 import logging
 import os
@@ -13,6 +14,10 @@ from wikibaseintegrator.wbi_exceptions import MWApiError
 
 # Import local config for user and password
 import config
+
+parser = argparse.ArgumentParser(description='Update French communes population on Wikidata')
+parser.add_argument('--dry-run', action='store_true', help='do not write anything to Wikidata, only log what would be written')
+args = parser.parse_args()
 
 wbi_config['USER_AGENT'] = 'WikibaseIntegrator/1.0 Update French Population'
 
@@ -237,7 +242,10 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                                     logging.info(f'Removing {len(claims_to_remove)} wrong P1082 claims from {entity}')
                                     for c in claims_to_remove:
                                         c.remove()
-                                    test_item.write(summary='Remove wrong population for ' + year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, retry_after=300)
+                                    if args.dry_run:
+                                        logging.info(f'[dry-run] Would remove {len(claims_to_remove)} P1082 claims from {entity}')
+                                    else:
+                                        test_item.write(summary='Remove wrong population for ' + year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, retry_after=300)
 
                     if not id_item and len(final_items) == 1:  # if only one item remains, we take it
                         id_item = final_items.pop()
@@ -290,11 +298,16 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                                 current_qualifiers = qualifiers_preferred if is_most_recent else qualifiers
                                 update_item.claims.add(claims=Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=current_qualifiers, rank=new_rank), action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
 
-                                update_item.write(summary='Update population for ' + year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, retry_after=300)
+                                if args.dry_run:
+                                    logging.info(f'[dry-run] Would write P1082 = {population} (rank {new_rank.value}) to {id_item}')
+                                    for claim in update_item.claims.get('P1082'):
+                                        logging.debug(f'[dry-run] {claim.get_json()}')
+                                else:
+                                    update_item.write(summary='Update population for ' + year, limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, retry_after=300)
 
-                                # Save the latest edited edited entity insee code
-                                with open(f'annees/{year}/last_edited.txt', 'w') as f:
-                                    f.write(code_insee)
+                                    # Save the latest edited edited entity insee code
+                                    with open(f'annees/{year}/last_edited.txt', 'w') as f:
+                                        f.write(code_insee)
                             except MWApiError as e:
                                 logging.debug(e)
                             # finally:
@@ -306,12 +319,12 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                         logging.debug(f'Final items: {final_items}')
                 else:
                     logging.info(f'Write not required for {row[7]} ({row[2]})')
-                exit(0)
 
-# Remove last edited file when done
-try:
-    os.remove(f'annees/{year}/last_edited.txt')
-except FileNotFoundError:
-    pass
+# Remove last edited file when done (kept on dry run to not lose the resume point of a real run)
+if not args.dry_run:
+    try:
+        os.remove(f'annees/{year}/last_edited.txt')
+    except FileNotFoundError:
+        pass
 
 print("--- %s seconds ---" % (time.time() - start_time))

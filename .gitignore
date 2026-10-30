@@ -155,3 +155,7 @@ config.py
 *.csv
 .idea/csv-plugin.xml
 /annees/
+/annees_old/
+.idea/deployment.xml
+.idea/copilot.*.xml
+.idea/git_toolbox_blame.xml

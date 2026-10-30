@@ -247,8 +247,8 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                                         claim.references.remove(reference_to_remove=Item(value=stated_in, prop_nr='P248'))
 
                                 new_rank = WikibaseRank.PREFERRED if is_most_recent else WikibaseRank.NORMAL
-                                current_qualifiers = qualifiers_preferred if is_most_recent else qualifiers
-                                new_claim = Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=current_qualifiers, rank=new_rank)
+                                # Without P7452, so that the claim of this census is updated instead of duplicated when it doesn't have P7452 yet
+                                new_claim = Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=new_rank)
 
                                 # Re-adding an existing claim with the normal rank keeps its current rank, set it explicitly
                                 for claim in update_item.claims.get('P1082'):
@@ -256,6 +256,10 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                                         claim.rank = new_rank
 
                                 update_item.claims.add(claims=new_claim, action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
+
+                                if is_most_recent:
+                                    census_claim = next(claim for claim in update_item.claims.get('P1082') if claim == new_claim)
+                                    census_claim.qualifiers.add(Item(prop_nr='P7452', value='Q71533355'))  # reason for preferred rank: most recent value
 
                                 bot.write(update_item, summary='Update population for ' + year)
 

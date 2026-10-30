@@ -1,1 +1,1 @@
-git+https://github.com/LeMyst/WikibaseIntegrator.git@new-fastrun#egg=wikibaseintegrator
+wikibaseintegrator~=0.13.0

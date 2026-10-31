@@ -33,6 +33,11 @@ wbi_config['USER_AGENT'] = 'WikibaseIntegrator/1.0 Update French Population'
 # of 5 times (15 seconds) by default since WikibaseIntegrator 0.14.
 wbi_config['BACKOFF_MAX_TRIES'] = 10
 
+# Wait for Wikidata as long as it asks the bots to slow down (maxlag, rate limiting, read-only mode): by default since
+# WikibaseIntegrator 0.14, a read stops the run after 20 tries, about 16 minutes of maxlag. The failures (connection
+# errors, HTTP 5xx) stay limited by BACKOFF_MAX_TRIES.
+MAX_RETRIES = 1000
+
 # Load the statements of the whole country in one query
 QUERY_LIMIT = 1000000
 
@@ -407,7 +412,7 @@ class Bot:
             if not self.write_required(claims, entities):
                 logging.info(f'Write not required for {label} {code}')
                 return False
-            item = self.wbi.item.get(entities[0], props=['claims'])
+            item = self.get_item(entities[0])
         else:
             # Always choose among several items, to also remove the population written on the wrong ones
             item = self.choose_item(entities, code, population)
@@ -453,7 +458,7 @@ class Bot:
         held = []
         new = []
         for entity in entities:
-            item = self.wbi.item.get(entity, props=['claims'])
+            item = self.get_item(entity)
             reason = rejection(item, self.code_property, code, self.instance_of)
             if reason is None:
                 held.append(item)
@@ -478,6 +483,10 @@ class Bot:
         logging.info(f'Items holding the code {code} on {geographic_date:%Y-%m-%d}: {[item.id for item in held]}')
         return None
 
+    def get_item(self, entity_id):
+        """Read the statements of an item."""
+        return self.wbi.item.get(entity_id, props=['claims'], max_retries=MAX_RETRIES)
+
     def try_write(self, item, summary):
         """Write the item, logging an error instead of stopping the run if the API refuses it. Return whether it was written."""
         try:
@@ -496,7 +505,7 @@ class Bot:
                 logging.debug(f'[dry-run] {claim.get_json()}')
             return
 
-        item.write(summary=self.editgroup.summary(summary), limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, retry_after=300)
+        item.write(summary=self.editgroup.summary(summary), limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, max_retries=MAX_RETRIES, retry_after=300)
 
         if self.check_constraints:
             self.log_constraint_violations(item.id)

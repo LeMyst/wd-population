@@ -41,6 +41,9 @@ MAX_RETRIES = 1000
 # Load the statements of the whole country in one query
 QUERY_LIMIT = 1000000
 
+# Read the items 50 at a time, the most wbgetentities takes in one request
+READ_BATCH_SIZE = 50
+
 logging.basicConfig(level=logging.DEBUG)
 
 year = str(config.year)
@@ -52,9 +55,6 @@ census_date = datetime(int(year), 1, 1)
 # The legal populations of a census are computed on the geography of the 1st January two years later: the population of
 # a code goes to the item holding it on this date, a commune created on this date included
 geographic_date = datetime(int(year) + 2, 1, 1)
-
-# The census is the latest one when no later year has its folder in annees/
-is_latest = year == max(path.name for path in Path('annees').iterdir() if path.name.isdigit())
 
 # Load year specific config
 stated_in = runpy.run_path(f'annees/{year}/config.py')['stated_in']
@@ -145,17 +145,6 @@ def takes_code_on_geographic_date(item, code_property, code):
 def starts_after_geographic_date(item, instance_of):
     """Whether the item becomes an instance of the type after the geographic date of the census, like a commune created later."""
     return any(start > geographic_date for claim in type_statements(item, instance_of) for start in qualifier_dates(claim, 'P580'))
-
-
-def expected_statement(population):
-    """
-    The population statement of the census expected on the item by the fastrun check: preferred, with the reason "most
-    recent value", for the latest census. The rank of an older census is not checked, it depends on the later
-    populations of the item.
-    """
-    if is_latest:
-        return Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers + [most_recent_value], rank=WikibaseRank.PREFERRED)
-    return Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers)
 
 
 def is_census_statement(claim, population):
@@ -317,6 +306,11 @@ def remove_census_statements(item, population):
     return len(census_claims)
 
 
+def is_edit_conflict(error):
+    """Whether Wikidata refused a write because the statements it changes were changed since the revision it is based on."""
+    return error.code == 'editconflict'
+
+
 class Bot:
     """
     Update the population of the items of a type from the INSEE codes of a CSV: read the command line options, login to
@@ -328,8 +322,8 @@ class Bot:
         :param description: The description of the script, for --help
         :param code_property: The property of the INSEE code, e.g. P374 for the communes
         :param instance_of: The type of the items, e.g. Q484170 (commune of France), or None to not check it
-        :param fastrun: Check the population of every item at once with fastrun. For a few items, False finds each one
-            by its code instead, and only reads the items.
+        :param fastrun: Find the items by their code among the codes of every item of the type, loaded at once with
+            fastrun. For a few items, False finds each one with a query instead.
         """
         parser = argparse.ArgumentParser(description=description)
         parser.add_argument('--dry-run', action='store_true', help='do not write anything to Wikidata, only log what would be written')
@@ -366,8 +360,11 @@ class Bot:
             ]
 
             logging.info('Creating fastrun container')
-            # The rank is only checked for the latest census, see expected_statement()
-            self.frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=is_latest, cache=True)
+            self.frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, cache=True)
+
+        # The items found for each code, and the items read ahead not used yet, see read_ahead()
+        self.found = {}
+        self.items = {}
 
         # The last code written by a real run of the script, to resume after it
         self.resume_file = Path(f'annees/{year}/last_edited_{Path(sys.argv[0]).stem}.txt')
@@ -381,15 +378,15 @@ class Bot:
         if resume_after:
             logging.info(f'Resuming after the code {resume_after} ({self.resume_file})')
 
+        rows = [row for row in sorted(rows) if row[0] > resume_after]
         start_time = time.time()
         stopped = False
-        for code, label, population in sorted(rows):
-            if code <= resume_after:
-                continue
+        for index, (code, label, population) in enumerate(rows):
             if self.max_edits is not None and self.edits >= self.max_edits:
                 logging.info(f'Stopping after {self.edits} edits (--max-edits), before the code {code}')
                 stopped = True
                 break
+            self.read_ahead(rows, index)
             if self.update(code, label, population) and not self.dry_run:
                 self.resume_file.write_text(code)
 
@@ -401,17 +398,12 @@ class Bot:
 
     def update(self, code, label, population):
         """Update the population of the item holding the code. Return whether it was written."""
-        claims = [ExternalID(prop_nr=self.code_property, value=code), expected_statement(population)]
-
-        entities = self.find_items(code, claims)
+        entities = self.find_items(code)
         if not entities:
             logging.info(f'No item found for {label} {code}')
             return False
 
         if len(entities) == 1:
-            if not self.write_required(claims, entities):
-                logging.info(f'Write not required for {label} {code}')
-                return False
             item = self.get_item(entities[0])
         else:
             # Always choose among several items, to also remove the population written on the wrong ones
@@ -419,33 +411,54 @@ class Bot:
             if not item:
                 logging.info(f'Skipping {label} {code}: no single item held the code on {geographic_date:%Y-%m-%d}')
                 return False
-            if not self.write_required(claims, [item.id]):
-                logging.info(f'Write not required for {label} {code} to {item.id}')
-                return False
 
-        summary = update_population(item, population)
-        if not summary:
-            logging.info(f'Population already up to date for {label} {code} on {item.id}')
-            return False
+        def change(item):
+            summary = update_population(item, population)
+            if summary:
+                logging.info(f'Write to Wikidata for {label} {code} to {item.id}')
+            else:
+                logging.info(f'Population already up to date for {label} {code} on {item.id}')
+            return summary
 
-        logging.info(f'Write to Wikidata for {label} {code} to {item.id}')
-        return self.try_write(item, summary)
+        return self.edit(item, change)
 
-    def find_items(self, code, claims):
-        """The ids of the items holding the code."""
-        if self.frc:
-            return self.frc.get_entities(claims=claims, cache=True, query_limit=QUERY_LIMIT)
-
-        type_filter = f'wdt:P31 wd:{self.instance_of}; ' if self.instance_of else ''
-        query = f'SELECT DISTINCT ?item WHERE {{ ?item {type_filter}wdt:P17 wd:Q142; p:{self.code_property}/ps:{self.code_property} "{code}". }}'
-        return [result['item']['value'].rsplit('/', 1)[-1] for result in wbi_helpers.execute_sparql_query(query)['results']['bindings']]
-
-    def write_required(self, claims, entities):
+    def find_items(self, code):
         """
-        Whether the population of the census is missing or different on the items. Always True without fastrun, the
-        items are read and update_population() tells if they change.
+        The ids of the items holding the code, whatever their population: since WikibaseIntegrator 0.13, fastrun only
+        finds the items holding every claim given, so the population of the census must not be one of them.
         """
-        return self.frc is None or self.frc.write_required(claims=claims, entity_filter=entities, property_filter='P1082', cache=True, query_limit=QUERY_LIMIT)
+        if code not in self.found:
+            if self.frc:
+                self.found[code] = self.frc.get_entities(claims=[ExternalID(prop_nr=self.code_property, value=code)], cache=True, query_limit=QUERY_LIMIT)
+            else:
+                type_filter = f'wdt:P31 wd:{self.instance_of}; ' if self.instance_of else ''
+                query = f'SELECT DISTINCT ?item WHERE {{ ?item {type_filter}wdt:P17 wd:Q142; p:{self.code_property}/ps:{self.code_property} "{code}". }}'
+                self.found[code] = [result['item']['value'].rsplit('/', 1)[-1] for result in wbi_helpers.execute_sparql_query(query)['results']['bindings']]
+        return self.found[code]
+
+    def read_ahead(self, rows, start):
+        """
+        Unless the items of the code of the row at start were already read, read them with the items of the next codes,
+        up to READ_BATCH_SIZE items in one request: it takes about as long as for one item.
+        """
+        if all(entity in self.items for entity in self.find_items(rows[start][0])):
+            return
+
+        entities = []
+        for code, _, _ in rows[start:start + READ_BATCH_SIZE]:
+            found = [entity for entity in self.find_items(code) if entity not in entities]
+            if entities and len(entities) + len(found) > READ_BATCH_SIZE:
+                break
+            entities += found
+
+        for batch_start in range(0, len(entities), READ_BATCH_SIZE):
+            result = wbi_helpers.mediawiki_api_call_helper(data={
+                'action': 'wbgetentities',
+                'ids': '|'.join(entities[batch_start:batch_start + READ_BATCH_SIZE]),
+                'props': 'claims|info',  # info for the revision id the write is based on
+                'format': 'json'
+            }, login=self.wbi.login, allow_anonymous=True, is_bot=self.wbi.is_bot, max_retries=MAX_RETRIES)
+            self.items.update(result['entities'])
 
     def choose_item(self, entities, code, population):
         """
@@ -455,6 +468,13 @@ class Bot:
 
         :return: The chosen item, or None if no single item held the code
         """
+        def remove(item):
+            removed = remove_census_statements(item, population)
+            if not removed:
+                return None
+            logging.info(f'Removing {removed} wrong population statements from {item.id}')
+            return 'Remove wrong population for ' + year
+
         held = []
         new = []
         for entity in entities:
@@ -471,10 +491,7 @@ class Bot:
                 logging.debug(f'Not removing the population of {entity}, it starts after {geographic_date:%Y-%m-%d}')
                 continue
 
-            removed = remove_census_statements(item, population)
-            if removed:
-                logging.info(f'Removing {removed} wrong population statements from {entity}')
-                self.try_write(item, summary='Remove wrong population for ' + year)
+            self.edit(item, remove)
 
         if len(new) == 1:
             return new[0]
@@ -484,28 +501,50 @@ class Bot:
         return None
 
     def get_item(self, entity_id):
-        """Read the statements of an item."""
-        return self.wbi.item.get(entity_id, props=['claims'], max_retries=MAX_RETRIES)
+        """Read the statements of an item, unless they were read ahead and not used yet."""
+        data = self.items.pop(entity_id, None)
+        if data is None:
+            return self.wbi.item.get(entity_id, props=['claims'], max_retries=MAX_RETRIES)
+        return ItemEntity(api=self.wbi).from_json(data)
 
-    def try_write(self, item, summary):
-        """Write the item, logging an error instead of stopping the run if the API refuses it. Return whether it was written."""
-        try:
-            self.write(item, summary)
-        except MWApiError as e:
-            logging.error(f'Write to {item.id} failed: {e}')
-            return False
-        return True
+    def edit(self, item, change):
+        """
+        Change the item and write it, logging an error instead of stopping the run if the API refuses it.
+
+        The item may have been read a few minutes before, with the next ones (see read_ahead()). The write is based on the
+        revision read: Wikidata merges it with the edits made since, or refuses it as an edit conflict when they changed
+        the same statements. The item is then read again and changed once more.
+
+        :param change: A function changing the item, returning the summary of the edit, or None if nothing changes
+        :return: Whether the item was written
+        """
+        for retry in (False, True):
+            summary = change(item)
+            if not summary:
+                return False
+            try:
+                self.write(item, summary)
+                return True
+            except MWApiError as e:
+                if retry or not is_edit_conflict(e):
+                    logging.error(f'Write to {item.id} failed: {e}')
+                    return False
+                logging.warning(f'Edit conflict on {item.id}, reading it again')
+                item = self.get_item(item.id)
+        return False
 
     def write(self, item: ItemEntity, summary):
         """Write the population (P1082) statements of the item, or only log them on a dry run."""
-        self.edits += 1
         if self.dry_run:
+            self.edits += 1
             logging.info(f'[dry-run] Would write to {item.id}: {summary}')
             for claim in item.claims.get('P1082'):
                 logging.debug(f'[dry-run] {claim.get_json()}')
             return
 
-        item.write(summary=self.editgroup.summary(summary), limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, max_retries=MAX_RETRIES, retry_after=300)
+        item.write(summary=self.editgroup.summary(summary), limit_claims=['P1082'], fields_to_update=EntityField.CLAIMS, baserevid=item.lastrevid,
+                   max_retries=MAX_RETRIES, retry_after=300)
+        self.edits += 1
 
         if self.check_constraints:
             self.log_constraint_violations(item.id)

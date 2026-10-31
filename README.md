@@ -21,7 +21,19 @@ python -m venv .venv
 ```
 
 Créer un fichier `config.py` avec `user` et `password` (mot de passe de robot) et `year` (année du recensement), puis
-lancer un script, par exemple `.venv\Scripts\python communes_fastrun.py`.
+lancer un script, par exemple `.venv\Scripts\python communes.py`.
+
+Un script par niveau :
+
+* `regions.py` : régions
+* `departements.py` : départements (sauf Paris, mis à jour par `paris_lyon_marseille.py`)
+* `arrondissements.py` : arrondissements
+* `cantons.py` : cantons
+* `communes.py` : communes
+* `arrondissements_municipaux.py` : arrondissements municipaux de Paris, Lyon et Marseille
+* `paris_lyon_marseille.py` : communes de Paris, Lyon et Marseille (somme de leurs arrondissements municipaux)
+
+Un script interrompu reprend après le dernier code modifié, enregistré dans `annees/<année>/last_edited_<script>.txt`.
 
 Options disponibles sur tous les scripts :
 

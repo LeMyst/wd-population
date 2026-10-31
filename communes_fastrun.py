@@ -1,7 +1,9 @@
 import csv
+import json
 import logging
 import os
 import time
+from collections import Counter
 from datetime import datetime
 
 from wikibaseintegrator import wbi_fastrun
@@ -21,6 +23,43 @@ is_latest = year == '2023'
 geographic_point_in_time = f'+{str(int(year) + 2)}-01-01T00:00:00Z'
 
 qualifiers_preferred = qualifiers + [Item(prop_nr='P7452', value='Q71533355')]
+
+
+def snak_keys(snaks):
+    """The snaks of the JSON of qualifiers or of a reference as (property, value) pairs, without their hashes."""
+    return sorted((snak['property'], json.dumps([snak['snaktype'], snak.get('datavalue')], sort_keys=True)) for property_snaks in snaks.values() for snak in property_snaks)
+
+
+def population_statements(item):
+    """
+    The population (P1082) statements of the item by id, to compare them before and after a change, without the hashes
+    and the orders that change when a statement is serialized again.
+    """
+    statements = {}
+    for claim in item.claims.get('P1082'):
+        data = claim.get_json()
+        statements[data.get('id')] = {
+            'value': json.dumps(data['mainsnak'].get('datavalue'), sort_keys=True),
+            'rank': data['rank'],
+            'remove': 'remove' in data,
+            'qualifiers': Counter(snak_keys(data.get('qualifiers', {}))),
+            'references': Counter(tuple(snak_keys(reference['snaks'])) for reference in data.get('references', []))
+        }
+    return statements
+
+
+def only_adds_p7452(before, after):
+    """Whether the only change between the population statements before and after is P7452 added to existing ones."""
+    if before == after or before.keys() != after.keys():
+        return False
+    for statement_id, statement in after.items():
+        old = before[statement_id]
+        if any(statement[key] != old[key] for key in ('value', 'rank', 'remove', 'references')):
+            return False
+        # No qualifier removed, and only P7452 added
+        if old['qualifiers'] - statement['qualifiers'] or any(prop != 'P7452' for prop, _ in statement['qualifiers'] - old['qualifiers']):
+            return False
+    return True
 
 base_filter = [
     Item(prop_nr='P31', value='Q484170'),  # instance of commune of France
@@ -209,6 +248,7 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                             try:
                                 logging.debug('write')
                                 update_item = wbi.item.get(id_item, props=['claims'])
+                                statements_before = population_statements(update_item)
 
                                 current_census_date = parse_wb_time(point_in_time)
                                 most_recent_date = None
@@ -261,7 +301,12 @@ with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile
                                     census_claim = next(claim for claim in update_item.claims.get('P1082') if claim == new_claim)
                                     census_claim.qualifiers.add(Item(prop_nr='P7452', value='Q71533355'))  # reason for preferred rank: most recent value
 
-                                bot.write(update_item, summary='Update population for ' + year)
+                                # The population of this census is often already there and only lacks its reason for the preferred rank
+                                if only_adds_p7452(statements_before, population_statements(update_item)):
+                                    summary = 'Add reason for preferred rank to population for ' + year
+                                else:
+                                    summary = 'Update population for ' + year
+                                bot.write(update_item, summary=summary)
 
                                 # Save the latest edited edited entity insee code
                                 if not bot.dry_run:

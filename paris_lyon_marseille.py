@@ -6,7 +6,9 @@ import logging
 
 from common import Bot, csv_rows, year
 
-bot = Bot('Update Paris, Lyon and Marseille population on Wikidata', code_property='P374')  # INSEE municipality code
+# No type: Paris is no longer a commune of France (Q484170) since 2019. Without it, fastrun would load the population of
+# every item with an INSEE code (the query service cuts it), to check three items: find them by their code instead
+bot = Bot('Update Paris, Lyon and Marseille population on Wikidata', code_property='P374', fastrun=False)  # INSEE municipality code
 
 # The communes and the codes of their municipal arrondissements
 communes = {

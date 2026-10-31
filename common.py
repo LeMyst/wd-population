@@ -318,11 +318,13 @@ class Bot:
     Wikidata, choose the item holding each code, update its population statements and write them.
     """
 
-    def __init__(self, description, code_property, instance_of=None):
+    def __init__(self, description, code_property, instance_of=None, fastrun=True):
         """
         :param description: The description of the script, for --help
         :param code_property: The property of the INSEE code, e.g. P374 for the communes
         :param instance_of: The type of the items, e.g. Q484170 (commune of France), or None to not check it
+        :param fastrun: Check the population of every item at once with fastrun. For a few items, False finds each one
+            by its code instead, and only reads the items.
         """
         parser = argparse.ArgumentParser(description=description)
         parser.add_argument('--dry-run', action='store_true', help='do not write anything to Wikidata, only log what would be written')
@@ -347,15 +349,17 @@ class Bot:
         if not self.dry_run:
             logging.info(f'EditGroups batch of this run: {self.editgroup.url}')
 
-        base_filter = [Item(prop_nr='P31', value=instance_of)] if instance_of else []  # instance of the type
-        base_filter += [
-            Item(prop_nr='P17', value='Q142'),  # country: France
-            ExternalID(prop_nr=code_property)  # INSEE code
-        ]
+        self.frc = None
+        if fastrun:
+            base_filter = [Item(prop_nr='P31', value=instance_of)] if instance_of else []  # instance of the type
+            base_filter += [
+                Item(prop_nr='P17', value='Q142'),  # country: France
+                ExternalID(prop_nr=code_property)  # INSEE code
+            ]
 
-        logging.info('Creating fastrun container')
-        # The rank is only checked for the latest census, see expected_statement()
-        self.frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=is_latest, cache=True)
+            logging.info('Creating fastrun container')
+            # The rank is only checked for the latest census, see expected_statement()
+            self.frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=is_latest, cache=True)
 
         # The last code written by a real run of the script, to resume after it
         self.resume_file = Path(f'annees/{year}/last_edited_{Path(sys.argv[0]).stem}.txt')
@@ -386,13 +390,13 @@ class Bot:
         """Update the population of the item holding the code. Return whether it was written."""
         claims = [ExternalID(prop_nr=self.code_property, value=code), expected_statement(population)]
 
-        entities = self.frc.get_entities(claims=claims, cache=True, query_limit=QUERY_LIMIT)
+        entities = self.find_items(code, claims)
         if not entities:
             logging.info(f'No item found for {label} {code}')
             return False
 
         if len(entities) == 1:
-            if not self.frc.write_required(claims=claims, entity_filter=entities, property_filter='P1082', cache=True, query_limit=QUERY_LIMIT):
+            if not self.write_required(claims, entities):
                 logging.info(f'Write not required for {label} {code}')
                 return False
             item = self.wbi.item.get(entities[0], props=['claims'])
@@ -402,7 +406,7 @@ class Bot:
             if not item:
                 logging.info(f'Skipping {label} {code}: no single item held the code on {geographic_date:%Y-%m-%d}')
                 return False
-            if not self.frc.write_required(claims=claims, entity_filter=[item.id], property_filter='P1082', cache=True, query_limit=QUERY_LIMIT):
+            if not self.write_required(claims, [item.id]):
                 logging.info(f'Write not required for {label} {code} to {item.id}')
                 return False
 
@@ -413,6 +417,22 @@ class Bot:
 
         logging.info(f'Write to Wikidata for {label} {code} to {item.id}')
         return self.try_write(item, summary)
+
+    def find_items(self, code, claims):
+        """The ids of the items holding the code."""
+        if self.frc:
+            return self.frc.get_entities(claims=claims, cache=True, query_limit=QUERY_LIMIT)
+
+        type_filter = f'wdt:P31 wd:{self.instance_of}; ' if self.instance_of else ''
+        query = f'SELECT DISTINCT ?item WHERE {{ ?item {type_filter}wdt:P17 wd:Q142; p:{self.code_property}/ps:{self.code_property} "{code}". }}'
+        return [result['item']['value'].rsplit('/', 1)[-1] for result in wbi_helpers.execute_sparql_query(query)['results']['bindings']]
+
+    def write_required(self, claims, entities):
+        """
+        Whether the population of the census is missing or different on the items. Always True without fastrun, the
+        items are read and update_population() tells if they change.
+        """
+        return self.frc is None or self.frc.write_required(claims=claims, entity_filter=entities, property_filter='P1082', cache=True, query_limit=QUERY_LIMIT)
 
     def choose_item(self, entities, code, population):
         """

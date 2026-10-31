@@ -41,6 +41,8 @@ Options disponibles sur tous les scripts :
   identifiants de `config.py` s'ils sont renseignés, sinon lit sans connexion.
 * `--check-constraints` : affiche les violations de contraintes des déclarations de population après chaque
   modification.
+* `--max-edits N` : s'arrête après N modifications, pour en vérifier quelques-unes avant de tout lancer. Le script
+  reprend ensuite après la dernière.
 
 Les modifications d'une exécution sont regroupées dans un lot [EditGroups](https://editgroups.toolforge.org/), dont le
 lien est affiché au démarrage, pour pouvoir les vérifier ou les annuler en une fois.

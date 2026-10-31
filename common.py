@@ -329,10 +329,13 @@ class Bot:
         parser = argparse.ArgumentParser(description=description)
         parser.add_argument('--dry-run', action='store_true', help='do not write anything to Wikidata, only log what would be written')
         parser.add_argument('--check-constraints', action='store_true', help='log the constraint violations of the population statements after each write')
+        parser.add_argument('--max-edits', type=int, metavar='N', help='stop after N edits, to check a few of them before a whole run')
         args = parser.parse_args()
 
         self.dry_run = args.dry_run
         self.check_constraints = args.check_constraints
+        self.max_edits = args.max_edits
+        self.edits = 0
         self.code_property = code_property
         self.instance_of = instance_of
 
@@ -374,14 +377,19 @@ class Bot:
             logging.info(f'Resuming after the code {resume_after} ({self.resume_file})')
 
         start_time = time.time()
+        stopped = False
         for code, label, population in sorted(rows):
             if code <= resume_after:
                 continue
+            if self.max_edits is not None and self.edits >= self.max_edits:
+                logging.info(f'Stopping after {self.edits} edits (--max-edits), before the code {code}')
+                stopped = True
+                break
             if self.update(code, label, population) and not self.dry_run:
                 self.resume_file.write_text(code)
 
-        # Kept on a dry run, to not lose the resume point of a real run
-        if not self.dry_run:
+        # Kept on a dry run, to not lose the resume point of a real run, and when stopped before the end
+        if not self.dry_run and not stopped:
             self.resume_file.unlink(missing_ok=True)
 
         logging.info(f'--- {time.time() - start_time:.0f} seconds ---')
@@ -481,6 +489,7 @@ class Bot:
 
     def write(self, item: ItemEntity, summary):
         """Write the population (P1082) statements of the item, or only log them on a dry run."""
+        self.edits += 1
         if self.dry_run:
             logging.info(f'[dry-run] Would write to {item.id}: {summary}')
             for claim in item.claims.get('P1082'):

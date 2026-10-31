@@ -19,6 +19,11 @@ import config
 
 wbi_config['USER_AGENT'] = 'WikibaseIntegrator/1.0 Update French Population'
 
+# A run lasts hours: wait out a short outage of Wikidata or of the query service instead of stopping. The failed
+# requests (connection errors, HTTP 5xx) are tried 10 times, waiting 1, 2, 4... seconds, 4 to 8 minutes in all, instead
+# of 5 times (15 seconds) by default since WikibaseIntegrator 0.14.
+wbi_config['BACKOFF_MAX_TRIES'] = 10
+
 logging.basicConfig(level=logging.DEBUG)
 
 year = str(config.year)

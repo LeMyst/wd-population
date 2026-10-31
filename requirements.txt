@@ -1,1 +1,1 @@
-wikibaseintegrator~=0.13.0
+wikibaseintegrator~=0.14.0

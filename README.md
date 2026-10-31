@@ -13,7 +13,7 @@ https://www.insee.fr/fr/statistiques?taille=100&debut=0&theme=1&categorie=5
 
 ## Utilisation
 
-Nécessite Python 3.11 ou plus récent (WikibaseIntegrator 0.13).
+Nécessite Python 3.11 ou plus récent (WikibaseIntegrator 0.14).
 
 ```
 python -m venv .venv

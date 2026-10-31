@@ -69,8 +69,9 @@ class Bot:
         self.dry_run = args.dry_run
         self.check_constraints = args.check_constraints
 
-        if self.dry_run:
-            # Reading doesn't require to be logged in
+        # A dry run reads anonymously without credentials. With them, it logs in like a real run: it checks the login,
+        # and reads with the higher rate limits of the bot account.
+        if self.dry_run and not (getattr(config, 'user', None) and getattr(config, 'password', None)):
             self.wbi = WikibaseIntegrator()
         else:
             login_instance = wbi_login.Login(user=config.user, password=config.password)

@@ -25,7 +25,8 @@ lancer un script, par exemple `.venv\Scripts\python communes_fastrun.py`.
 
 Options disponibles sur tous les scripts :
 
-* `--dry-run` : n'écrit rien sur Wikidata, affiche seulement les modifications prévues (sans connexion).
+* `--dry-run` : n'écrit rien sur Wikidata, affiche seulement les modifications prévues. Se connecte avec les
+  identifiants de `config.py` s'ils sont renseignés, sinon lit sans connexion.
 * `--check-constraints` : affiche les violations de contraintes des déclarations de population après chaque
   modification.
 

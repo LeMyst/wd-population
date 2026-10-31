@@ -1,173 +1,34 @@
-import csv
+"""
+Update the population of the communes of Paris, Lyon and Marseille on Wikidata, from the legal populations of INSEE: the
+sum of the populations of their municipal arrondissements.
+"""
 import logging
-from datetime import datetime
 
-from wikibaseintegrator import wbi_fastrun
-from wikibaseintegrator.datatypes import ExternalID, Item, Quantity, Time
-from wikibaseintegrator.wbi_enums import ActionIfExists, WikibaseRank
-from wikibaseintegrator.wbi_exceptions import MWApiError
+from common import Bot, csv_rows, year
 
-from common import Bot, parse_wb_time, point_in_time, qualifiers, references, stated_in, year
+bot = Bot('Update Paris, Lyon and Marseille population on Wikidata', code_property='P374')  # INSEE municipality code
 
-bot = Bot('Update Paris, Lyon and Marseille population on Wikidata')
-wbi = bot.wbi
-
-is_latest = year == '2023'
-
-geographic_point_in_time = f'+{str(int(year) + 2)}-01-01T00:00:00Z'
-
-# Definition of the Metropoles and their Arrondissements ranges
-targets = {
-    '75056': {'name': 'Paris', 'range': range(75101, 75121), 'population': 0},
-    '69123': {'name': 'Lyon', 'range': range(69381, 69390), 'population': 0},
-    '13055': {'name': 'Marseille', 'range': range(13201, 13217), 'population': 0}
+# The communes and the codes of their municipal arrondissements
+communes = {
+    '75056': ('Paris', range(75101, 75121)),
+    '69123': ('Lyon', range(69381, 69390)),
+    '13055': ('Marseille', range(13201, 13217))
 }
 
-base_filter = [
-    Item(prop_nr='P17', value='Q142'),  # country -> France
-    ExternalID(prop_nr='P374')  # INSEE municipality code
-]
+file_name = 'donnees_communes.csv' if year >= '2019' else 'Communes.csv'
 
-print('Creating fastrun container')
-frc = wbi_fastrun.get_fastrun_container(base_filter=base_filter, use_qualifiers=True, use_references=True, use_rank=is_latest, cache=True)
+populations = dict.fromkeys(communes, 0)
+for row in csv_rows(file_name):
+    code = row[6]  # COM
+    for commune, (name, arrondissements) in communes.items():
+        if code.isdigit() and int(code) in arrondissements:
+            populations[commune] += int(row[8])  # PMUN
 
-if year >= '2019':
-    file_name = 'donnees_communes.csv'
-else:
-    file_name = 'Communes.csv'
-
-print(f'Start parsing CSV: annees/{year}/{file_name}')
-with open(f'annees/{year}/{file_name}', newline='', encoding='utf-8') as csvfile:
-    spamreader = csv.reader(csvfile, delimiter=';')
-    next(spamreader)  # Skip header if present, though commune_fastrun checks row[0].isnumeric()
-
-    for row in spamreader:
-        if len(row) > 6 and row[0].isnumeric():
-            code_insee = row[6]  # COM
-            try:
-                val_insee = int(code_insee.replace('A', '0').replace('B', '0'))
-                population = int(row[8])  # PMUN
-            except ValueError:
-                continue
-
-            for target_insee, data in targets.items():
-                if val_insee in data['range']:
-                    data['population'] += population
-
-# Process updates
-for code_insee, data in targets.items():
-    population = data['population']
-    name = data['name']
-
-    if population == 0:
-        logging.warning(f'No population found for {name} ({code_insee})')
-        continue
-
-    logging.info(f'Processing {name} ({code_insee}): {population}')
-
-    claims = [
-        ExternalID(prop_nr='P374', value=code_insee),
-        Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=WikibaseRank.PREFERRED)
-    ]
-
-    entities = frc.get_entities(claims=claims, cache=True)
-    if not entities:
-        logging.info(f'No item found for {name} ({code_insee})')
-        continue
-
-    write_required = frc.write_required(claims=claims, entity_filter=entities, property_filter='P1082', cache=True)
-
-    if write_required:
-        id_item = None
-        final_items = entities.copy()
-
-        if len(entities) > 1:
-            # Logic from communes_fastrun to pick the right item
-            census = datetime.strptime(geographic_point_in_time, '+%Y-%m-%dT00:00:00Z')
-            for entity in entities:
-                test_item = wbi.item.get(entity, props=['claims'])
-                should_remove = False
-
-                if 'P576' in test_item.claims:
-                    dissolved_claims = test_item.claims.get('P576')
-                    for dc in dissolved_claims:
-                        time_str = dc.mainsnak.datavalue.get('value', {}).get('time') if hasattr(dc.mainsnak, 'datavalue') else None
-                        d = parse_wb_time(time_str)
-                        if d and d < census:
-                            should_remove = True
-                            break
-
-                if not should_remove:
-                    insee_claims = test_item.claims.get('P374')
-                    for insee_claim in insee_claims:
-                        if insee_claim.mainsnak.datavalue['value'] != code_insee:
-                            should_remove = True
-                            break
-                        if 'P582' in insee_claim.qualifiers_order:
-                            etime_str = insee_claim.qualifiers.get('P582')[0].datavalue['value']['time']
-                            d = parse_wb_time(etime_str)
-                            if d and d < census:
-                                should_remove = True
-                                break
-
-                if should_remove and entity in final_items:
-                    final_items.remove(entity)
-
-        if len(final_items) == 1:
-            id_item = final_items[0]
-        else:
-            logging.warning(f'Could not determine unique item for {name} ({code_insee}). Candidates: {final_items}')
-            # For PLM, we can probably hardcode or fallback.
-            # Paris Q90, Lyon Q456, Marseille Q23485.
-            # But let's trust the logic first.
-            if len(final_items) > 1:
-                # fallback to simple "is not dissolved" logic is mostly done above.
-                pass
-
-        if id_item:
-            try:
-                update_item = wbi.item.get(id_item, props=['claims'])
-
-                # Logic to determine rank and cleanup
-                current_census_date = parse_wb_time(point_in_time)
-                most_recent_date = None
-
-                for claim in update_item.claims.get('P1082'):
-                    if 'P585' in claim.qualifiers_order:
-                        for q in claim.qualifiers.get('P585'):
-                            qt = q.datavalue['value']['time']
-                            dt = parse_wb_time(qt)
-                            if dt:
-                                if most_recent_date is None or dt > most_recent_date:
-                                    most_recent_date = dt
-
-                is_most_recent = True
-                if most_recent_date and current_census_date < most_recent_date:
-                    is_most_recent = False
-
-                for claim in update_item.claims.get('P1082'):
-                    if is_most_recent:
-                        claim.rank = WikibaseRank.NORMAL
-                    if len(claim.qualifiers.get('P585')) > 1:
-                        claim.qualifiers.remove(qualifier=Time(prop_nr='P585', time=point_in_time))
-                    if len(claim.references.references) > 1:
-                        claim.references.remove(reference_to_remove=Item(value=stated_in, prop_nr='P248'))
-
-                new_rank = WikibaseRank.PREFERRED if is_most_recent else WikibaseRank.NORMAL
-                new_claim = Quantity(amount=population, prop_nr='P1082', references=references, qualifiers=qualifiers, rank=new_rank)
-
-                # Re-adding an existing claim with the normal rank keeps its current rank, set it explicitly
-                for claim in update_item.claims.get('P1082'):
-                    if claim == new_claim:
-                        claim.rank = new_rank
-
-                update_item.claims.add(claims=new_claim, action_if_exists=ActionIfExists.APPEND_OR_REPLACE)
-
-                bot.write(update_item, summary='Update population (metropole) for ' + year)
-                logging.info(f'Successfully updated {name} ({id_item})')
-            except MWApiError as e:
-                logging.error(f'Error updating {name}: {e}')
+rows = []
+for code, (name, _) in communes.items():
+    if populations[code]:
+        rows.append((code, name, populations[code]))
     else:
-        logging.info(f'No update required for {name}')
+        logging.warning(f'No population found for {name} {code}')
 
-print('Done.')
+bot.run(rows)

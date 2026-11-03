@@ -73,6 +73,9 @@ references = [
 # Reason for the preferred rank of the population of the most recent census
 most_recent_value = Item(prop_nr='P7452', value='Q71533355')  # reason for preferred rank: most recent value
 
+# Reference properties that only tell where a value was copied from, not where it comes from
+IMPORT_PROPERTIES = {'P143', 'P4656'}  # imported from Wikimedia project, Wikimedia import URL
+
 
 def csv_rows(file_name):
     """The rows of a CSV file of the census year, without its header."""
@@ -154,6 +157,11 @@ def is_census_statement(claim, population):
             and any(snak.datavalue.get('value', {}).get('id') == stated_in for reference in claim.references for snak in reference.snaks.get('P248')))
 
 
+def is_sourced(claim):
+    """Whether the statement has a reference to a source, not only to the Wikimedia project it was imported from."""
+    return any({snak.property_number for snak in reference.snaks} - IMPORT_PROPERTIES for reference in claim.references)
+
+
 def has_most_recent_reason(claim):
     return any(snak.datavalue.get('value', {}).get('id') == most_recent_value.mainsnak.datavalue['value']['id'] for snak in claim.qualifiers.get('P7452'))
 
@@ -174,14 +182,15 @@ def set_most_recent_reason(claim, present):
 
 def promote_most_recent(claims):
     """
-    When no population statement is preferred, make the one with the most recent point in time preferred, with the
-    reason "most recent value", so that the population of the item stays the most recent one.
+    When no population statement is preferred, make the sourced one with the most recent point in time preferred, with
+    the reason "most recent value", so that the population of the item stays the most recent one. An unsourced
+    statement is never made preferred.
     """
     claims = [claim for claim in claims if not claim.removed and claim.rank != WikibaseRank.DEPRECATED]
     if any(claim.rank == WikibaseRank.PREFERRED for claim in claims):
         return
 
-    dated = [(max(qualifier_dates(claim, 'P585')), claim) for claim in claims if qualifier_dates(claim, 'P585')]
+    dated = [(max(qualifier_dates(claim, 'P585')), claim) for claim in claims if is_sourced(claim) and qualifier_dates(claim, 'P585')]
     if not dated:
         return
 
@@ -234,9 +243,9 @@ def only_adds_p7452(before, after):
 
 def update_population(item, population):
     """
-    Add or update the population statement of the census on the item, and set the ranks: the statement of the most
-    recent census is preferred, with the reason "most recent value" (P7452), the others normal. The deprecated statements
-    are left as they are.
+    Add or update the population statement of the census on the item, and set the ranks: the statement of the census is
+    preferred when no sourced statement is more recent, with the reason "most recent value" (P7452), the others normal.
+    The deprecated statements are left as they are.
 
     :return: The summary of the edit, or None if the statements don't change.
     """
@@ -247,8 +256,9 @@ def update_population(item, population):
         logging.warning(f'The population {population} of {year} is deprecated on {item.id}, left as it is')
         return None
 
-    ranked_claims = [claim for claim in claims if claim.rank != WikibaseRank.DEPRECATED]
-    is_most_recent = all(date <= census_date for claim in ranked_claims for date in qualifier_dates(claim, 'P585'))
+    # An unsourced statement of a later date, like a value added by hand, doesn't make this census an older one
+    sourced_claims = [claim for claim in claims if claim.rank != WikibaseRank.DEPRECATED and is_sourced(claim)]
+    is_most_recent = all(date <= census_date for claim in sourced_claims for date in qualifier_dates(claim, 'P585'))
 
     for claim in claims:
         if is_most_recent and claim.rank != WikibaseRank.DEPRECATED:
